@@ -43,7 +43,35 @@ fn main() -> std::io::Result<()> {
     part1[2] = 2;
     run_program(&mut part1);
     
-    println!("Part 1: {} - {:?}", part1[0], part1);
+    println!("Part 1: {}", part1[0]);
+
+    // Part 2: what pair of inputs (replacing values 1 and 2) produces the output (value 0) 19690720?
+    // Calculate 100 * noun (value 1) * verb (value 2) that produce 19690720
+
+    let mut i = 0;
+    let mut part2 = nums.clone();
+    while part2[0] != 19690720 {
+        let mut j = 0;
+
+        while j <= i && part2[0] != 19690720 {
+            j += 1;
+            part2 = nums.clone();
+            part2[1] = i;
+            part2[2] = j;
+            run_program(&mut part2);
+
+            if part2[0] != 19690720 {
+                part2 = nums.clone();
+                part2[1] = j;
+                part2[2] = i;
+                run_program(&mut part2);
+            }
+        }
+
+        i += 1;
+    }
+
+    println!("Part 2: {}", 100 * part2[1] + part2[2]);
 
     Ok(())
 }
