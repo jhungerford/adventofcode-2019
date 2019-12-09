@@ -31,6 +31,18 @@ fn test_is_adjacent_digit_same() {
 }
 
 #[test]
+fn test_is_adjacent_digit_same_pairs() {
+    assert_eq!(true, is_adjacent_digit_same_pairs(&112233));
+    assert_eq!(true, is_adjacent_digit_same_pairs(&111122)); // 1111 doesn't count, but 22 does.
+    assert_eq!(true, is_adjacent_digit_same_pairs(&122344));
+    assert_eq!(true, is_adjacent_digit_same_pairs(&122345));
+
+    assert_eq!(false, is_adjacent_digit_same_pairs(&123456));
+    assert_eq!(false, is_adjacent_digit_same_pairs(&123444));
+    assert_eq!(false, is_adjacent_digit_same_pairs(&124444));
+}
+
+#[test]
 fn test_is_increasing() {
     assert_eq!(true, is_increasing(&111111));
     assert_eq!(true, is_increasing(&12345));
