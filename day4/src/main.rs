@@ -81,7 +81,6 @@ fn strict_num_valid(min: u32, max: u32) -> u32 {
     (min..max + 1).into_par_iter()
         .filter(|num| is_six_digit_number(num) 
                         && is_in_range(num)
-                        && is_adjacent_digit_same(num)
                         && is_adjacent_digit_same_pairs(num)
                         && is_increasing(num))
         .count() as u32
