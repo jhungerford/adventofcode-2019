@@ -123,6 +123,9 @@ fn parse_segments(line: &str) -> Vec<Segment> {
     parsed.to_owned()
 }
 
+#[cfg(test)]
+mod test;
+
 fn main() -> std::io::Result<()> {
     let f = File::open("input.txt")?;
     let mut reader = BufReader::new(f);
