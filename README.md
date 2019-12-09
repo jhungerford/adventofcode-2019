@@ -34,3 +34,6 @@ test tests::first_intersection_ex2 ... ok
 
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
+
+## Development
+To add a new day, run `cargo new --bin dayN` at the root of this project.  Days typically have an input file at the top level named `input.txt`, a `src/main.rs` file with a `fn main()` that prints the solutions to both parts, and a `src/test.rs` that contains tests for the day.
