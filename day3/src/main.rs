@@ -25,7 +25,7 @@ struct Segment {
     length: i32,
 }
 
-#[derive(Hash, Eq, PartialEq, Copy, Clone)]
+#[derive(Hash, Eq, PartialEq, Copy, Clone, Ord, PartialOrd)]
 struct Position {
     x: i32,
     y: i32,
@@ -43,8 +43,8 @@ fn manhatten_distance(p1: &Position, p2: &Position) -> i32 {
     (p1.x - p2.x).abs() + (p1.y - p2.y).abs()
 }
 
-fn wire_locations(segments: Vec<Segment>) -> HashSet<Position> {
-    let mut locations = HashSet::new();
+fn wire_locations(segments: &Vec<Segment>) -> Vec<Position> {
+    let mut locations = Vec::new();
 
     // Move before inserting the position so the origin isn't included.
     let mut position = ORIGIN;
@@ -57,20 +57,58 @@ fn wire_locations(segments: Vec<Segment>) -> HashSet<Position> {
                 Direction::RIGHT => Position{x: position.x + 1, y: position.y},
             };
 
-            locations.insert(position);
+            locations.push(position);
         }
     }
 
     locations.to_owned()
 }
 
-fn closest_intersection(s1: Vec<Segment>, s2: Vec<Segment>) -> Option<i32> {
-    let positions1 = wire_locations(s1);
-    let positions2 = wire_locations(s2);
+fn closest_intersection(s1: &Vec<Segment>, s2: &Vec<Segment>) -> i32 {
+    let positions1: HashSet<Position> = wire_locations(s1).into_iter().collect();
+    let positions2: HashSet<Position> = wire_locations(s2).into_iter().collect();
 
     positions1.intersection(&positions2)
         .map(|p| manhatten_distance(&ORIGIN, p))
         .min()
+        .unwrap()
+}
+
+fn sorted_intersection_distances(positions: &Vec<Position>, intersections: &HashSet<&Position>) -> Vec<i32> {
+    // Vec of (distance, position), where the only positions are intersections.
+    let mut distance_intersections: Vec<(usize, &Position)> = positions.iter().enumerate()
+        .filter(|(_, position)| intersections.contains(position)) // Only care about intersections.
+        .map(|(i, position)| (i + 1, position)) // Position distances start at 1, not 0, since the origin isn't included.
+        .collect();
+    
+    // Sort by intersection, then map to just distance.
+    distance_intersections.sort_by(|(_, position1), (_, position2)| position1.cmp(position2));
+
+    distance_intersections.iter()
+        .map(|(i, _)| *i as i32) // Only care about distances now.
+        .collect()
+}
+
+fn first_intersection(s1: &Vec<Segment>, s2: &Vec<Segment>) -> i32 {
+    let positions1 = wire_locations(s1);
+    let positions2 = wire_locations(s2);
+
+    // Figure out where the two wires intersect.
+    let positions_set1: HashSet<Position> = positions1.iter().cloned().collect();
+    let positions_set2: HashSet<Position> = positions2.iter().cloned().collect();
+
+    let intersections: HashSet<&Position> = positions_set1.intersection(&positions_set2).collect();
+
+    // Grab a list of distances to each intersection.  Both returned lists have intersections at the same indexes.
+    let distances1 = sorted_intersection_distances(&positions1, &intersections);
+    let distances2 = sorted_intersection_distances(&positions2, &intersections);
+
+    // Zip the distances together.  Since both distance lists have intersection positions at the same index,
+    // the first intersection is the one with the fewest combined steps.
+    return distances1.iter().zip(distances2)
+        .map(|(d1, d2)| d1 + d2)
+        .min()
+        .unwrap()
 }
 
 fn parse_segments(line: &str) -> Vec<Segment> {
@@ -85,6 +123,58 @@ fn parse_segments(line: &str) -> Vec<Segment> {
     parsed.to_owned()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closest_intersection_ex1() {
+        let segments1 = parse_segments(&"R8,U5,L5,D3");
+        let segments2 = parse_segments(&"U7,R6,D4,L4");
+
+        assert_eq!(6, closest_intersection(&segments1, &segments2));
+    }
+
+    #[test]
+    fn closest_intersection_ex2() {
+        let segments1 = parse_segments(&"R75,D30,R83,U83,L12,D49,R71,U7,L72");
+        let segments2 = parse_segments(&"U62,R66,U55,R34,D71,R55,D58,R83");
+
+        assert_eq!(159, closest_intersection(&segments1, &segments2));
+    }
+
+    #[test]
+    fn closest_intersection_ex3() {
+        let segments1 = parse_segments(&"R98,U47,R26,D63,R33,U87,L62,D20,R33,U53,R51");
+        let segments2 = parse_segments(&"U98,R91,D20,R16,D67,R40,U7,R15,U6,R7");
+
+        assert_eq!(135, closest_intersection(&segments1, &segments2));
+    }
+
+    #[test]
+    fn first_intersection_ex1() {
+        let segments1 = parse_segments(&"R8,U5,L5,D3");
+        let segments2 = parse_segments(&"U7,R6,D4,L4");
+
+        assert_eq!(30, first_intersection(&segments1, &segments2));
+    }
+
+    #[test]
+    fn first_intersection_ex2() {
+        let segments1 = parse_segments(&"R75,D30,R83,U83,L12,D49,R71,U7,L72");
+        let segments2 = parse_segments(&"U62,R66,U55,R34,D71,R55,D58,R83");
+
+        assert_eq!(610, first_intersection(&segments1, &segments2));
+    }
+
+    #[test]
+    fn first_intersection_ex3() {
+        let segments1 = parse_segments(&"R98,U47,R26,D63,R33,U87,L62,D20,R33,U53,R51");
+        let segments2 = parse_segments(&"U98,R91,D20,R16,D67,R40,U7,R15,U6,R7");
+
+        assert_eq!(410, first_intersection(&segments1, &segments2));
+    }
+}
 
 fn main() -> std::io::Result<()> {
     let f = File::open("input.txt")?;
@@ -99,7 +189,8 @@ fn main() -> std::io::Result<()> {
     let segments1 = parse_segments(&line1);
     let segments2 = parse_segments(&line2);
 
-    println!("Part 1: {}", closest_intersection(segments1, segments2).unwrap());
+    println!("Part 1: {}", closest_intersection(&segments1, &segments2));
+    println!("Part 2: {}", first_intersection(&segments1, &segments2));
 
     Ok(())
 }
