@@ -55,5 +55,27 @@ fn test_total_orbits() {
     ];
 
     let orbit_map = parse_orbits(&lines);
-    assert_eq!(42, total_orbits(orbit_map));
+    assert_eq!(42, total_orbits(&orbit_map));
+}
+
+#[test]
+fn test_fewest_transfers() {
+    let lines = vec![
+            "COM)B",
+            "B)C",
+            "C)D",
+            "D)E",
+            "E)F",
+            "B)G",
+            "G)H",
+            "D)I",
+            "E)J",
+            "J)K",
+            "K)L",
+            "K)YOU",
+            "I)SAN",
+    ];
+
+    let orbit_map = parse_orbits(&lines);
+    assert_eq!(4, fewest_transfers(&orbit_map, "YOU", "SAN"));
 }
