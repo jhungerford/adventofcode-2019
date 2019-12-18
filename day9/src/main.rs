@@ -68,5 +68,14 @@ fn main() -> std::io::Result<()> {
 
     println!("Part 1: {}", output.value);
 
+    // Part 2: what's the output in BOOST mode? (input = 2)
+    let mut input = AlwaysValueProgramInput::new(2);
+    let mut output = LastValueProgramOutput::new();
+    let mut computer = Computer::new(program.clone());
+
+    computer.run(&mut input, &mut output);
+
+    println!("Part 2: {}", output.value);
+
     Ok(())
 }
