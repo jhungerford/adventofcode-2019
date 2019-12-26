@@ -62,6 +62,13 @@ impl Map {
             .unwrap_or(0)
     }
 
+    fn max_visible_position(&self) -> Position {
+        self.asteroids.iter()
+            .max_by(|&pos_a, &pos_b| self.total_visible(pos_a).cmp(&self.total_visible(pos_b)))
+            .unwrap()
+            .clone()
+    }
+
     /// Returns the total number of asteroids that are visible from the given position.
     fn total_visible(&self, position: &Position) -> usize {
         let visible: HashSet<Position> = self.asteroids.iter()
@@ -76,6 +83,73 @@ impl Map {
     /// that are further away.
     fn visible_asteroid(&self, position: &Position, extent: &Position) -> Option<Position> {
         position.to(extent).find(|pos| self.get(&pos) == &Contents::Asteroid)
+    }
+
+    /// Returns asteroids in the order that they should be vaporized.  The laser starts at 0 degrees
+    /// from the given position, and vaporizes one asteroid that it can see.  It rotates clockwise,
+    /// vaporizing asteroids until they're all gone.  If one asteroid occludes another, the laser
+    /// must make a full rotation before vaporizing the next asteroid in line.
+    fn vaporize_order(&self, from: &Position) -> Vec<&Position> {
+        #[derive(Debug)]
+        struct AngleDistance<'a> {
+            position: &'a Position,
+            angle: f64,
+            distance: f64,
+        }
+
+        #[derive(Debug)]
+        struct AngleOrder<'a> {
+            position: &'a Position,
+            angle: f64,
+            order: usize,
+        }
+
+        #[derive(Debug)]
+        struct AngleCount {
+            angle: f64,
+            count: usize,
+        }
+
+        // Convert asteroids (excluding the station) -> (angle, distance).
+        // For all of the asteroids at an angle, convert distance into the order the asteroids
+        // are vaporized.  From (angle, order), sort by order then angle to get the final result.
+        let mut angle_distances: Vec<AngleDistance> = self.asteroids.iter()
+            .filter(|&asteroid| asteroid != from)
+            .map(|asteroid| AngleDistance {
+                position: asteroid,
+                angle: from.angle(&asteroid),
+                distance: from.distance(&asteroid)
+            }).collect();
+
+        angle_distances.sort_by(|a, b| {
+            a.angle.partial_cmp(&b.angle).unwrap()
+                .then(a.distance.partial_cmp(&b.distance).unwrap())
+        });
+
+        // State is the previous angle and order (number of asteroids seen at that angle so far)
+        let mut angle_orders: Vec<AngleOrder> = angle_distances.iter()
+            .scan(AngleCount { angle: -1 as f64, count: 0 }, |angle_count, angle_distance| {
+                if angle_distance.angle == angle_count.angle {
+                    angle_count.count += 1;
+                } else {
+                    *angle_count = AngleCount {
+                        angle: angle_distance.angle,
+                        count: 0,
+                    };
+                }
+
+                Some(AngleOrder{
+                    position: angle_distance.position,
+                    angle: angle_distance.angle,
+                    order: angle_count.count,
+                })
+            }).collect();
+
+        angle_orders.sort_by(|a, b| {
+            a.order.cmp(&b.order).then(a.angle.partial_cmp(&b.angle).unwrap())
+        });
+
+        angle_orders.into_iter().map(|angle_order| angle_order.position).collect()
     }
 }
 
@@ -131,6 +205,57 @@ mod test {
         assert_eq!(map.get(&Position::new(2, 2)), &Contents::Asteroid);
     }
 
+    #[test]
+    fn test_vaporize_order() {
+        let map = vaporize_map();
+
+        let actual = map.vaporize_order(&Position::new(8, 3));
+        assert_eq!(vec![
+            &Position::new(8, 1),
+            &Position::new(9, 0),
+            &Position::new(9, 1),
+            &Position::new(10, 0),
+            &Position::new(9, 2),
+            &Position::new(11, 1),
+            &Position::new(12, 1),
+            &Position::new(11, 2),
+        ], &actual[0..8]);
+    }
+
+    #[test]
+    fn test_vaporize_order_big_map() {
+        let lines = vec![
+            ".#..##.###...#######",
+            "##.############..##.",
+            ".#.######.########.#",
+            ".###.#######.####.#.",
+            "#####.##.#.##.###.##",
+            "..#####..#.#########",
+            "####################",
+            "#.####....###.#.#.##",
+            "##.#################",
+            "#####.##.###..####..",
+            "..######..##.#######",
+            "####.##.####...##..#",
+            ".#####..#.######.###",
+            "##...#.##########...",
+            "#.##########.#######",
+            ".####.#.###.###.#.##",
+            "....##.##.###..#####",
+            ".#.#.###########.###",
+            "#.#.#.#####.####.###",
+            "###.##.####.##.#..##",
+        ];
+
+        let map = Map::parse(&lines);
+
+        let station = map.max_visible_position();
+        let vaporize_order = map.vaporize_order(&station);
+        let two_hundredth = vaporize_order[199];
+
+        assert_eq!(&Position::new(8, 2), two_hundredth);
+    }
+
     fn sample_map() -> Map {
         let lines = vec![
             ".#..#", // .7..7
@@ -138,6 +263,19 @@ mod test {
             "#####", // 67775
             "....#", // ....7
             "...##", // ...87
+        ];
+
+        Map::parse(&lines)
+    }
+
+    fn vaporize_map() -> Map {
+        // Station at (8, 3).
+        let lines = vec![
+            ".#....#####...#..",
+            "##...##.#####..##",
+            "##...#...#.#####.",
+            "..#.....#...###..",
+            "..#.#.....#....##",
         ];
 
         Map::parse(&lines)
@@ -159,4 +297,10 @@ fn main() {
     let map = Map::parse(&str_lines);
 
     println!("Part 1: {}", map.max_visible());
+
+    let station = map.max_visible_position();
+    let vaporize_order = map.vaporize_order(&station);
+    let two_hundredth = vaporize_order[199];
+
+    println!("Part 2: {}", two_hundredth.x * 100 + two_hundredth.y);
 }

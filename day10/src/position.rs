@@ -1,6 +1,7 @@
 use std::fmt;
 use std::iter::Iterator;
 use std::ops::Add;
+use std::f64::consts::PI;
 
 /// Position on the map - x is from the left edge, and y is from the top.  (0,0) is the top left corner.
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Ord, PartialOrd)]
@@ -48,6 +49,7 @@ impl Position {
         Position {x, y}
     }
 
+    /// Returns an iterator of points that can be visited from this position to the other position.
     pub fn to<'a>(&'a self, other: &'a Position) -> PositionStep {
         let direction_x = other.x as i32 - self.x as i32;
         let direction_y = other.y as i32 - self.y as i32;
@@ -65,6 +67,32 @@ impl Position {
             x: direction_x / step,
             y: direction_y / step,
         }
+    }
+
+    /// Returns the angle from this position to the other position, in degrees.  Up is 0.
+    pub fn angle(&self, other: &Position) -> f64 {
+        let x = other.x as f64 - self.x as f64;
+        let y = self.y as f64 - other.y as f64;
+
+        // atan2 returns the angle from (0, 0) to (x, y) in radians.
+        // The right half is [0 - 180], but the left half is [0, -180] (0 is up in both)
+        // We want [0, 360) degrees with up at 0, so transform the output.
+        let angle = (x.atan2(y)) * 180 as f64 / PI;
+        if angle < 0 as f64 { // Less than 0 makes the output range [0, 360)
+            360 as f64 + angle
+        } else {
+            angle
+        }
+    }
+
+    /// Returns the straight-line distance between this position and the other position.
+    pub fn distance(&self, other: &Position) -> f64 {
+        // a^2 + b^2 = c^2.  Square distance would work for sorting distance too,
+        // but there's few enough asteroids in this problem that the sqrt is fast enough.
+        let x = self.x as f64 - other.x as f64;
+        let y = self.y as f64 - other.y as f64;
+
+        (x.powi(2) + y.powi(2)).sqrt()
     }
 }
 
@@ -154,5 +182,19 @@ mod test {
             Position::new(1, 2),
             Position::new(0, 2),
         ])
+    }
+
+    #[test]
+    fn test_angle() {
+        let center = Position::new(2, 2);
+
+        assert_eq!(0 as f64, center.angle(&Position::new(2, 0)));
+        assert_eq!(45 as f64, center.angle(&Position::new(3, 1)));
+        assert_eq!(90 as f64, center.angle(&Position::new(3, 2)));
+        assert_eq!(135 as f64, center.angle(&Position::new(3, 3)));
+        assert_eq!(180 as f64, center.angle(&Position::new(2, 3)));
+        assert_eq!(225 as f64, center.angle(&Position::new(1, 3)));
+        assert_eq!(270 as f64, center.angle(&Position::new(1, 2)));
+        assert_eq!(315 as f64, center.angle(&Position::new(1, 1)));
     }
 }
