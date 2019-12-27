@@ -215,14 +215,14 @@ impl OpcodeModes<'_> {
     /// Parses the computer's current instruction into an OpcodeModes.
     /// 102 means multiply, where a is in immediate mode and b and out are in position mode.
     pub fn for_computer(computer: &Computer) -> OpcodeModes<'_> {
-        let mut parsing_number = computer.memory.get_value(computer.pc);
+        let mut parsing_number = computer.memory.get_value(computer.pc) as usize;
 
-        let opcode = (parsing_number % 100) as usize;
+        let opcode = parsing_number % 100;
         parsing_number /= 100;
 
-        let mut modes = Vec::<usize>::new();
+        let mut modes = Vec::new();
         while parsing_number > 0 {
-            modes.push((parsing_number % 10) as usize);
+            modes.push(parsing_number % 10);
             parsing_number /= 10;
         }
 
@@ -278,6 +278,7 @@ impl Memory {
         Memory { values: map.to_owned() }
     }
 
+    /// Returns the value of the given parameter.
     fn get(&self, parameter: Parameter) -> i64 {
         use ParameterMode::*;
 
