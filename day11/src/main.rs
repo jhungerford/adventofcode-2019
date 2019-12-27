@@ -1,5 +1,6 @@
 use computer::*;
 use std::collections::HashMap;
+use std::fmt;
 
 mod computer;
 
@@ -23,6 +24,15 @@ impl PanelColor {
         match self {
             PanelColor::Black => 0,
             PanelColor::White => 1,
+        }
+    }
+}
+
+impl fmt::Display for PanelColor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PanelColor::Black => write!(f, "."),
+            PanelColor::White => write!(f, "#"),
         }
     }
 }
@@ -64,8 +74,8 @@ impl RobotDirection {
 
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
 struct Position {
-    x: i64,
-    y: i64,
+    x: i32,
+    y: i32,
 }
 
 impl Position {
@@ -101,21 +111,43 @@ impl RobotState {
     }
 
     /// Paints the square that the robot is currently on.
-    fn paint(&mut self, color: i64) {
-        self.panels.insert(self.position.clone(), PanelColor::from(color));
-        self.next_input = NextRobotInput::Turn;
+    fn paint(&mut self, color: PanelColor) {
+        self.panels.insert(self.position.clone(), color);
     }
 
     /// Turns the given direction, then moves forward exactly one panel
-    fn turn(&mut self, direction: i64) {
-        self.direction = self.direction.turn(TurnDirection::from(direction));
+    fn turn(&mut self, direction: TurnDirection) {
+        self.direction = self.direction.turn(direction);
         self.position = self.position.forward(&self.direction);
-        self.next_input = NextRobotInput::Paint;
+    }
+
+    /// Returns the color of the panel at the given position.
+    fn color(&self, position: &Position) -> &PanelColor {
+        self.panels.get(position).unwrap_or(&PanelColor::Black)
     }
 
     /// Returns the number of squares that this robot painted at least once.
     fn num_squares_painted(&self) -> usize {
         self.panels.len()
+    }
+
+    /// Prints a rectangle containing the squares that the robot has painted.
+    fn print(&self) {
+        // Figure out how large the printed rectangle should be.  y is positive in the down direction.
+        let (left, right, top, bottom) = self.panels.keys()
+            .fold((0, 0, 0, 0), |(bound_left, bound_right, bound_top, bound_bottom), panel| (
+                if panel.x < bound_left { panel.x } else { bound_left },
+                if panel.x > bound_right { panel.x } else { bound_right },
+                if panel.y < bound_top { panel.y } else { bound_top },
+                if panel.y > bound_bottom { panel.y } else { bound_bottom },
+            ));
+
+        for y in top ..= bottom {
+            for x in left ..= right {
+                print!("{}", self.color(&Position {x, y}));
+            }
+            println!();
+        }
     }
 }
 
@@ -123,26 +155,42 @@ impl RobotState {
 impl ProgramIO for RobotState {
     /// Input that reads the color of the panel under the robot.
     fn input(&mut self) -> i64 {
-        self.panels.get(&self.position).unwrap_or(&PanelColor::Black).value()
+        self.color(&self.position).value()
     }
 
     /// Output that moves the robot.  Toggles between two states when called - the first call paints
     /// the square under the robot, the second call turns the robot left or right.
     fn output(&mut self, value: i64) {
         match self.next_input {
-            NextRobotInput::Paint => self.paint(value),
-            NextRobotInput::Turn => self.turn(value),
+            NextRobotInput::Paint => {
+                self.paint(PanelColor::from(value));
+                self.next_input = NextRobotInput::Turn;
+
+            },
+            NextRobotInput::Turn => {
+                self.turn(TurnDirection::from(value));
+                self.next_input = NextRobotInput::Paint;
+            },
         }
     }
 }
 
 fn main() -> std::io::Result<()> {
-    let mut computer = Computer::from_file("input.txt")?;
-    let mut robot = RobotState::new();
+    // Part 1: how many squares did the robot paint at least once?
+    let mut part1_computer = Computer::from_file("input.txt")?;
+    let mut part1_robot = RobotState::new();
 
-    computer.run(&mut robot);
+    part1_computer.run(&mut part1_robot);
 
-    println!("Part 1: {}", robot.num_squares_painted());
+    println!("Part 1: {}", part1_robot.num_squares_painted());
+
+    // Part 2: what does the robot print when it starts on a white square?
+    let mut part2_computer = Computer::from_file("input.txt")?;
+    let mut part2_robot = RobotState::new();
+
+    part2_robot.paint(PanelColor::White);
+    part2_computer.run(&mut part2_robot);
+    part2_robot.print();
 
     Ok(())
 }
