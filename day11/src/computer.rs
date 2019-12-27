@@ -70,125 +70,6 @@ enum Instruction {
     Halt
 }
 
-/// Parses the instruction at the given program counter, returning the instruction and new program counter.
-fn parse_instruction(computer: &Computer) -> Instruction {
-    let pc = computer.pc;
-
-    // Opcode: last two digits are the instruction, proceeding are the modes for the parameters.
-    let opcode_modes = OpcodeModes::parse(computer.memory.get(pc));
-
-    match opcode_modes.opcode {
-        // Add two numbers and stores them in a third.
-        1 => Instruction::Add {
-            a: opcode_modes.parameter(&computer, 0),
-            b: opcode_modes.parameter(&computer, 1),
-            out: opcode_modes.index(&computer, 2),
-        },
-        // Multiply two numbers and stores them in a third.
-        2 => Instruction::Multiply {
-            a: opcode_modes.parameter(&computer, 0),
-            b: opcode_modes.parameter(&computer, 1),
-            out: opcode_modes.index(&computer, 2),
-        },
-        // Take an input value and saves it at a position.
-        3 => Instruction::Input {
-            to: opcode_modes.index(&computer, 0)
-        },
-        // Output a value to a position.
-        4 => Instruction::Output {
-            from: opcode_modes.parameter(&computer, 0)
-        },
-        // If the first parameter is non-zero, sets the program counter to the value from the second parameter
-        5 => Instruction::JumpIfTrue {
-            what: opcode_modes.parameter(&computer, 0),
-            to: opcode_modes.parameter(&computer, 1),
-        },
-        // If the first parameter is zero, sets the program counter to the value from the second parameter
-        6 => Instruction::JumpIfFalse {
-            what: opcode_modes.parameter(&computer, 0),
-            to: opcode_modes.parameter(&computer, 1),
-        },
-        // If the first parameter is less than the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
-        7 => Instruction::LessThan {
-            a: opcode_modes.parameter(&computer, 0),
-            b: opcode_modes.parameter(&computer, 1),
-            out: opcode_modes.index(&computer, 2),
-        },
-        // If the first parameter equals the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
-        8 => Instruction::Equals {
-            a: opcode_modes.parameter(&computer, 0),
-            b: opcode_modes.parameter(&computer, 1),
-            out: opcode_modes.index(&computer, 2),
-        },
-        9 => Instruction::RelativeBaseOffset {
-            by: opcode_modes.parameter(&computer, 0),
-        },
-        // Done with execution.  The program should stop after executing this instruction.
-        99 => Instruction::Halt,
-        n => panic!("Unknown opcode {} at pc {}", n, pc)
-    }
-}
-
-/// Executes the given instruction, modifying the computer if applicable.
-fn run_instruction<IO: ProgramIO>(instruction: &Instruction, computer: &mut Computer, io: &mut IO) {
-    match instruction {
-        // Add two numbers and stores them in a third.
-        &Instruction::Add {a, b, out} => {
-            computer.memory.set(out, a.value(&computer.memory) + b.value(&computer.memory));
-            computer.pc += 4;
-        }
-        // Multiply two numbers and stores them in a third.
-        &Instruction::Multiply {a, b, out} => {
-            computer.memory.set(out, a.value(&computer.memory) * b.value(&computer.memory));
-            computer.pc += 4;
-        }
-        // Take an input value and saves it at a position.
-        &Instruction::Input {to} => {
-            computer.memory.set(to, io.input());
-            computer.pc += 2;
-        }
-        // Output a value to a position.
-        &Instruction::Output {from} => {
-            io.output(from.value(&computer.memory));
-            computer.pc += 2;
-        }
-        // If the first parameter is non-zero, sets the program counter to the value from the second parameter
-        &Instruction::JumpIfTrue {what, to} => {
-            if what.value(&computer.memory) != 0 {
-                computer.pc = to.value(&computer.memory) as usize;
-            } else {
-                computer.pc += 3;
-            }
-        }
-        // If the first parameter is zero, sets the program counter to the value from the second parameter
-        &Instruction::JumpIfFalse {what, to} => {
-            if what.value(&computer.memory) == 0 {
-                computer.pc = to.value(&computer.memory) as usize;
-            } else {
-                computer.pc += 3;
-            }
-        }
-        // If the first parameter is less than the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
-        &Instruction::LessThan {a, b, out} => {
-            computer.memory.set(out, if a.value(&computer.memory) < b.value(&computer.memory) {1} else {0});
-            computer.pc += 4;
-        }
-        // If the first parameter equals the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
-        &Instruction::Equals {a, b, out} => {
-            computer.memory.set(out, if a.value(&computer.memory) == b.value(&computer.memory) {1} else {0});
-            computer.pc += 4;
-        }
-        &Instruction::RelativeBaseOffset {by} => {
-            computer.relative_base = (computer.relative_base as i64 + by.value(&computer.memory)) as usize;
-            computer.pc += 2;
-        }
-        // Done with execution.  The program should stop after executing this instruction.
-        &Instruction::Halt => {
-            panic!("Halt should not be run.");
-        }
-    }
-}
-
 #[derive(Debug)]
 struct OpcodeModes {
     opcode: u32,
@@ -210,10 +91,7 @@ impl OpcodeModes {
             parsing_number /= 10;
         }
 
-        OpcodeModes {
-            opcode: opcode,
-            modes: modes,
-        }
+        OpcodeModes { opcode, modes }
     }
 
     /// Returns the mode for the parameter at the given index.
@@ -343,11 +221,127 @@ impl Computer {
     /// Runs the computer's program.  Calling this twice does nothing, since the program halts
     /// after the first run.
     pub fn run<IO: ProgramIO>(&mut self, io: &mut IO) {
-        let mut instruction = parse_instruction(self);
+        let mut instruction = self.parse_instruction();
         while instruction != Instruction::Halt {
-            // println!("Running {:?} - {:?}", &instruction, &self);
-            run_instruction(&instruction, self, io);
-            instruction = parse_instruction(self);
+            self.run_instruction(&instruction, io);
+            instruction = self.parse_instruction();
+        }
+    }
+
+    /// Parses the instruction at the given program counter, returning the instruction and new program counter.
+    fn parse_instruction(&self) -> Instruction {
+        // Opcode: last two digits are the instruction, proceeding are the modes for the parameters.
+        let opcode_modes = OpcodeModes::parse(self.memory.get(self.pc));
+
+        match opcode_modes.opcode {
+            // Add two numbers and stores them in a third.
+            1 => Instruction::Add {
+                a: opcode_modes.parameter(&self, 0),
+                b: opcode_modes.parameter(&self, 1),
+                out: opcode_modes.index(&self, 2),
+            },
+            // Multiply two numbers and stores them in a third.
+            2 => Instruction::Multiply {
+                a: opcode_modes.parameter(&self, 0),
+                b: opcode_modes.parameter(&self, 1),
+                out: opcode_modes.index(&self, 2),
+            },
+            // Take an input value and saves it at a position.
+            3 => Instruction::Input {
+                to: opcode_modes.index(&self, 0)
+            },
+            // Output a value to a position.
+            4 => Instruction::Output {
+                from: opcode_modes.parameter(&self, 0)
+            },
+            // If the first parameter is non-zero, sets the program counter to the value from the second parameter
+            5 => Instruction::JumpIfTrue {
+                what: opcode_modes.parameter(&self, 0),
+                to: opcode_modes.parameter(&self, 1),
+            },
+            // If the first parameter is zero, sets the program counter to the value from the second parameter
+            6 => Instruction::JumpIfFalse {
+                what: opcode_modes.parameter(&self, 0),
+                to: opcode_modes.parameter(&self, 1),
+            },
+            // If the first parameter is less than the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
+            7 => Instruction::LessThan {
+                a: opcode_modes.parameter(&self, 0),
+                b: opcode_modes.parameter(&self, 1),
+                out: opcode_modes.index(&self, 2),
+            },
+            // If the first parameter equals the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
+            8 => Instruction::Equals {
+                a: opcode_modes.parameter(&self, 0),
+                b: opcode_modes.parameter(&self, 1),
+                out: opcode_modes.index(&self, 2),
+            },
+            9 => Instruction::RelativeBaseOffset {
+                by: opcode_modes.parameter(&self, 0),
+            },
+            // Done with execution.  The program should stop after executing this instruction.
+            99 => Instruction::Halt,
+            n => panic!("Unknown opcode {} at pc {}", n, self.pc)
+        }
+    }
+
+    /// Executes the given instruction, modifying the computer if applicable.
+    fn run_instruction<IO: ProgramIO>(&mut self, instruction: &Instruction, io: &mut IO) {
+        match instruction {
+            // Add two numbers and stores them in a third.
+            &Instruction::Add {a, b, out} => {
+                self.memory.set(out, a.value(&self.memory) + b.value(&self.memory));
+                self.pc += 4;
+            }
+            // Multiply two numbers and stores them in a third.
+            &Instruction::Multiply {a, b, out} => {
+                self.memory.set(out, a.value(&self.memory) * b.value(&self.memory));
+                self.pc += 4;
+            }
+            // Take an input value and saves it at a position.
+            &Instruction::Input {to} => {
+                self.memory.set(to, io.input());
+                self.pc += 2;
+            }
+            // Output a value to a position.
+            &Instruction::Output {from} => {
+                io.output(from.value(&self.memory));
+                self.pc += 2;
+            }
+            // If the first parameter is non-zero, sets the program counter to the value from the second parameter
+            &Instruction::JumpIfTrue {what, to} => {
+                if what.value(&self.memory) != 0 {
+                    self.pc = to.value(&self.memory) as usize;
+                } else {
+                    self.pc += 3;
+                }
+            }
+            // If the first parameter is zero, sets the program counter to the value from the second parameter
+            &Instruction::JumpIfFalse {what, to} => {
+                if what.value(&self.memory) == 0 {
+                    self.pc = to.value(&self.memory) as usize;
+                } else {
+                    self.pc += 3;
+                }
+            }
+            // If the first parameter is less than the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
+            &Instruction::LessThan {a, b, out} => {
+                self.memory.set(out, if a.value(&self.memory) < b.value(&self.memory) {1} else {0});
+                self.pc += 4;
+            }
+            // If the first parameter equals the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
+            &Instruction::Equals {a, b, out} => {
+                self.memory.set(out, if a.value(&self.memory) == b.value(&self.memory) {1} else {0});
+                self.pc += 4;
+            }
+            &Instruction::RelativeBaseOffset {by} => {
+                self.relative_base = (self.relative_base as i64 + by.value(&self.memory)) as usize;
+                self.pc += 2;
+            }
+            // Done with execution.  The program should stop after executing this instruction.
+            &Instruction::Halt => {
+                panic!("Halt should not be run.");
+            }
         }
     }
 }

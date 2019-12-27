@@ -190,6 +190,8 @@ fn main() -> std::io::Result<()> {
 
     part2_robot.paint(PanelColor::White);
     part2_computer.run(&mut part2_robot);
+
+    println!("Part 2:");
     part2_robot.print();
 
     Ok(())
