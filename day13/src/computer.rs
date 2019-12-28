@@ -145,17 +145,17 @@ impl Instruction {
         match self {
             // Add two numbers and stores them in a third.
             Add {a, b, out} => {
-                computer.memory.set(out, computer.memory.get(a) + computer.memory.get(b));
+                computer.memory.set_addr(out, computer.memory.get(a) + computer.memory.get(b));
                 computer.pc += 4;
             }
             // Multiply two numbers and stores them in a third.
             Multiply {a, b, out} => {
-                computer.memory.set(out, computer.memory.get(a) * computer.memory.get(b));
+                computer.memory.set_addr(out, computer.memory.get(a) * computer.memory.get(b));
                 computer.pc += 4;
             }
             // Take an input value and saves it at a position.
             Input {to} => {
-                computer.memory.set(to, io.input());
+                computer.memory.set_addr(to, io.input());
                 computer.pc += 2;
             }
             // Output a value to a position.
@@ -181,12 +181,12 @@ impl Instruction {
             }
             // If the first parameter is less than the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
             LessThan {a, b, out} => {
-                computer.memory.set(out, if computer.memory.get(a) < computer.memory.get(b) {1} else {0});
+                computer.memory.set_addr(out, if computer.memory.get(a) < computer.memory.get(b) {1} else {0});
                 computer.pc += 4;
             }
             // If the first parameter equals the second parameter, stores 1 in the position given by the third parameter.  Otherwise stores 0.
             Equals {a, b, out} => {
-                computer.memory.set(out, if computer.memory.get(a) == computer.memory.get(b) {1} else {0});
+                computer.memory.set_addr(out, if computer.memory.get(a) == computer.memory.get(b) {1} else {0});
                 computer.pc += 4;
             }
             RelativeBaseOffset {by} => {
@@ -215,7 +215,7 @@ impl OpcodeModes<'_> {
     /// Parses the computer's current instruction into an OpcodeModes.
     /// 102 means multiply, where a is in immediate mode and b and out are in position mode.
     pub fn for_computer(computer: &Computer) -> OpcodeModes<'_> {
-        let mut parsing_number = computer.memory.get_value(computer.pc) as usize;
+        let mut parsing_number = computer.memory.get_addr(computer.pc) as usize;
 
         let opcode = parsing_number % 100;
         parsing_number /= 100;
@@ -237,8 +237,8 @@ impl OpcodeModes<'_> {
         // Parameters that don't have an explicit opcode mode default to position (0)
         let mode = ParameterMode::from_value(if parameter < self.modes.len() { self.modes[parameter] } else { 0 });
         let index = match mode {
-            Position | Immediate => self.computer.memory.get_value(self.computer.pc + parameter + 1),
-            Relative => (self.computer.memory.get_value(self.computer.pc + parameter + 1) + self.computer.relative_base as i64),
+            Position | Immediate => self.computer.memory.get_addr(self.computer.pc + parameter + 1),
+            Relative => (self.computer.memory.get_addr(self.computer.pc + parameter + 1) + self.computer.relative_base as i64),
         } as IndexParameter;
 
         Parameter {index, mode}
@@ -246,7 +246,7 @@ impl OpcodeModes<'_> {
 }
 
 /// Memory contains a sparse representation of memory values.
-struct Memory {
+pub struct Memory {
     values: HashMap<usize, i64>
 }
 
@@ -283,19 +283,19 @@ impl Memory {
         use ParameterMode::*;
 
         match parameter.mode {
-            Position | Relative => self.get_value(parameter.index),
+            Position | Relative => self.get_addr(parameter.index),
             Immediate => parameter.index as i64,
         }
     }
 
     /// Returns the value of the given memory address.  If the address has never been set,
     /// returns the default value of 0.
-    fn get_value(&self, addr: usize) -> i64 {
+    pub fn get_addr(&self, addr: usize) -> i64 {
         self.values.get(&addr).unwrap_or(&0).clone()
     }
 
     /// Sets the memory at the given address.
-    fn set(&mut self, addr: usize, value: i64) {
+    pub fn set_addr(&mut self, addr: usize, value: i64) {
         self.values.insert(addr, value);
     }
 }
@@ -310,7 +310,7 @@ pub trait ProgramIO {
 pub struct Computer {
     pc:  usize,
     relative_base: usize,
-    memory: Memory,
+    pub memory: Memory,
 }
 
 impl Computer {
