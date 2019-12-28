@@ -1,7 +1,11 @@
+extern crate pancurses;
+
 use std::fmt;
 use computer::*;
 use std::fmt::{Formatter, Error};
 use std::collections::HashMap;
+
+use pancurses::{initscr, endwin, Window, cbreak, noecho};
 
 mod computer;
 
@@ -23,25 +27,32 @@ impl Tile {
             n => panic!("Invalid tile: {}", n),
         }
     }
-}
 
-impl fmt::Display for Tile {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+    fn char(&self) -> char {
         use Tile::*;
 
         match self {
-            Empty => write!(f, " "),
-            Wall => write!(f, "."),
-            Block => write!(f, "#"),
-            Paddle => write!(f, "-"),
-            Ball => write!(f, "o"),
+            Empty => ' ',
+            Wall => '.',
+            Block => '#',
+            Paddle => '-',
+            Ball => 'o',
         }
     }
 }
 
-struct Game {
+impl fmt::Display for Tile {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "{}", self.char())
+    }
+}
+
+struct Game<'a> {
     input: GameInputState,
-    tiles: HashMap<Position, Tile>
+    tiles: HashMap<Position, Tile>,
+    title: &'a str,
+    score: i64,
+    window: Window,
 }
 
 struct GameInputState {
@@ -54,22 +65,18 @@ enum NextGameInputState {
     X, Y, TileId
 }
 
-#[derive(Eq, PartialEq, Hash, Debug)]
+#[derive(Eq, PartialEq, Hash, Debug, Copy, Clone)]
 struct Position {
     x: i64,
     y: i64,
 }
 
-impl fmt::Display for Game {
+impl fmt::Display for Game<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        writeln!(f, "{} - Blocks: {} - Score: {}", self.title, self.num_blocks(), self.score)?;
+
         // Figure out how large the printed rectangle should be.  y is positive in the down direction.
-        let (left, right, top, bottom) = self.tiles.keys()
-            .fold((0, 0, 0, 0), |(bound_left, bound_right, bound_top, bound_bottom), panel| (
-                if panel.x < bound_left { panel.x } else { bound_left },
-                if panel.x > bound_right { panel.x } else { bound_right },
-                if panel.y < bound_top { panel.y } else { bound_top },
-                if panel.y > bound_bottom { panel.y } else { bound_bottom },
-            ));
+        let (left, right, top, bottom) = self.bounds();
 
         for y in top ..= bottom {
             for x in left ..= right {
@@ -84,8 +91,12 @@ impl fmt::Display for Game {
     }
 }
 
-impl Game {
-    fn new() -> Game {
+impl Game<'_> {
+    fn new(title: &str) -> Game {
+        let window = initscr();
+        cbreak(); // Disable line buffering - we want arrow keys as soon as they're typed.
+        noecho(); // Don't echo input back to the screen.
+
         Game {
             input: GameInputState {
                 next_state: NextGameInputState::X,
@@ -93,6 +104,9 @@ impl Game {
                 y: None,
             },
             tiles: HashMap::new(),
+            title,
+            score: 0,
+            window,
         }
     }
 
@@ -101,9 +115,38 @@ impl Game {
             .filter(|&tile| *tile == Tile::Block)
             .count()
     }
+
+    fn bounds(&self) -> (i64, i64, i64, i64) {
+        self.tiles.keys()
+            .fold((0, 0, 0, 0), |(bound_left, bound_right, bound_top, bound_bottom), panel| (
+                if panel.x < bound_left { panel.x } else { bound_left },
+                if panel.x > bound_right { panel.x } else { bound_right },
+                if panel.y < bound_top { panel.y } else { bound_top },
+                if panel.y > bound_bottom { panel.y } else { bound_bottom },
+            ))
+    }
+
+    /// Draws the current game state to the window.
+    fn render(&self) {
+        self.window.clear();
+
+        self.window.mvaddstr(0, 0, format!("{} - Blocks: {} - Score: {}", self.title, self.num_blocks(), self.score));
+
+        // Figure out how large the printed rectangle should be.  y is positive in the down direction.
+        let (left, right, top, bottom) = self.bounds();
+
+        for y in top ..= bottom {
+            for x in left ..= right {
+                let tile = self.tiles.get(&Position {x, y}).unwrap_or(&Tile::Empty);
+                self.window.mvaddch(y as i32 + 1, x as i32, tile.char());
+            }
+        }
+
+        self.window.refresh();
+    }
 }
 
-impl ProgramIO for Game {
+impl ProgramIO for Game<'_> {
     fn input(&mut self) -> i64 {
         unimplemented!()
     }
@@ -112,6 +155,7 @@ impl ProgramIO for Game {
         use NextGameInputState::*;
 
         // Every 3 outputs are x, y, and tile id
+        // x=-1, y=0 means that the third argument is a score, not a tile.
         match self.input.next_state {
             X => {
                 self.input.x = Some(value);
@@ -131,6 +175,7 @@ impl ProgramIO for Game {
                 self.input.x = None;
                 self.input.y = None;
                 self.input.next_state = X;
+                self.render();
             }
         }
     }
@@ -139,10 +184,15 @@ impl ProgramIO for Game {
 fn main() -> std::io::Result<()> {
     // Part 1: how many block tiles are on the screen when the game exits?
     let mut computer = Computer::from_file("input.txt")?;
-    let mut game = Game::new();
+    let mut game = Game::new("Part 1");
 
     computer.run(&mut game);
+    game.window.getch();
+    endwin();
     println!("Part 1: {}\n{}", game.num_blocks(), game);
+
+    // Part 2: after inserting a quarter (2 -> memory address 0), what's the score when you win the game?
+
 
     Ok(())
 }
