@@ -12,9 +12,6 @@
 
 use std::fs::File;
 use std::io::{BufReader, BufRead};
-use std::collections::{HashSet, HashMap};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rayon::slice::ParallelSliceMut;
 
 /// Loads input from the given file.
 pub fn load_input(filename: &str) -> String {
@@ -34,10 +31,18 @@ pub fn fft(input: &str, phases: usize) -> usize {
     let mut buffer = parse(input);
 
     for _ in 0..phases {
-        buffer = fft_phase(buffer);
+        let mut output = Vec::with_capacity(buffer.len());
+
+        for n in 0..buffer.len() {
+            output.push((indexes(n + 1, buffer.len())
+                .map(|(i, signum)| (buffer[i] * signum) as i32)
+                .sum::<i32>().abs() % 10) as i8);
+        }
+
+        buffer = output;
     }
 
-    format_result(&buffer, 8, 0)
+    format_result(&buffer, 0)
 }
 
 /// Decodes the real signal from the given input by repeating the input 10,000 times,
@@ -45,75 +50,51 @@ pub fn fft(input: &str, phases: usize) -> usize {
 /// given by the first seven digits of the input.
 pub fn fft_real(input: &str, phases: usize) -> usize {
     let offset: usize = input[0..7].parse().unwrap();
-    let mut buffer = parse(&input.trim().repeat(10000));
-    let len = buffer.len();
 
-    // Since we only care about the 8 digits after the offset, work backwards
-    // to figure out which indexes we need to update.
-    let mut ns = HashSet::new();
-    let mut to_expand = Vec::new();
-    (offset..offset + 8).for_each(|expand| to_expand.push(expand));
+    // The pattern is 0, 1, 0, -1... where each value is repeated n times, so the second half
+    // of the output is 0's followed by 1's.  We only care about values after the offset,
+    // and we can compute each result value by summing buffer values from right to left.
+    if offset <= (input.len() * 10000) / 2 {
+        panic!("Offset {} is too low to decode the real signal.", offset);
+    }
 
-    while let Some(expand) = to_expand.pop() {
-        if !ns.contains(&expand) {
-            indexes(expand, buffer.len()).for_each(|(i, _)| {
-                if ns.insert(i) {
-                    to_expand.push(i);
-                }
-            })
+    // Buffer starts at the offset since we don't care about values before it.
+    let mut buffer = parse(&input.trim().repeat(10000)[offset..]);
+
+    // Run a simplified FFT.  Second half is always positive, so we can track the running sum % 10.
+    for _ in 0..phases {
+        let mut output = Vec::with_capacity(buffer.len());
+        let mut sum = 0;
+
+        for i in (0..buffer.len()).rev() {
+            sum = (sum + buffer[i]) % 10;
+            output.push(sum);
         }
+
+        output.reverse();
+        buffer = output;
     }
 
-    let mut ns = ns.into_iter().collect::<Vec<usize>>();
-    ns.par_sort();
-
-    // Run FFT.
-    for phase in 0..phases {
-        println!("Phase {}", phase);
-
-        buffer = fft_phase_indexes(buffer, &ns, len);
-    }
-
-    format_result(&buffer, 8, offset)
+    format_result(&buffer, 0)
 }
 
 /// Parses digits in the given input into a buffer.
-fn parse(input: &str) -> HashMap<usize, u32> {
+fn parse(input: &str) -> Vec<i8> {
     let trimmed = input.trim();
-    let mut buf = HashMap::with_capacity(trimmed.len());
+    let mut buf = Vec::with_capacity(trimmed.len());
 
     for (i, c) in trimmed.chars().enumerate() {
-        buf.insert(i, c as u32 - '0' as u32);
+        buf.insert(i, c as i8 - '0' as i8);
     }
 
     buf
 }
 
 /// Takes digits from the buffer starting at the given offset, and formats them into a number.
-fn format_result(buffer: &HashMap<usize, u32>, digits: usize, offset: usize) -> usize {
-    (0..digits)
-        .map(|i| buffer[&(i + offset)] * u32::pow(10, (digits-1-i) as u32))
-        .sum::<u32>() as usize
-}
-
-/// Calculates the result of running one phase of FFT.
-fn fft_phase(input: HashMap<usize, u32>) -> HashMap<usize, u32> {
-    let len = input.len();
-    let indexes: Vec<usize> = (0..len).collect();
-    fft_phase_indexes(input, &indexes, len)
-}
-
-/// Calculates the result of running one phase of FFT on the given indexes.
-fn fft_phase_indexes(input: HashMap<usize, u32>, ns: &Vec<usize>, len: usize) -> HashMap<usize, u32> {
-    let result = ns.into_par_iter().map(|n| {
-        let digit = indexes(n+1, len)
-            .map(|(i, signum)| input[&i] as i32 * signum)
-            .sum::<i32>().abs() as u32 % 10;
-
-        (*n, digit)
-    }).collect::<HashMap<usize, u32>>();
-
-    result
+fn format_result(buffer: &Vec<i8>, offset: usize) -> usize {
+    (0..8)
+        .map(|i| buffer[i + offset] as usize * usize::pow(10, 7-i as u32))
+        .sum::<usize>()
 }
 
 /// Returns an iterator of indexes and signums that should be summed to compute the value n.
@@ -125,13 +106,13 @@ struct Indexes {
     n: usize,
     len: usize,
     next_index: usize,
-    signum: i32,
+    signum: i8,
     group_index: usize,
 }
 
 impl Iterator for Indexes {
     /// Item is the next index, and the sign for that index.
-    type Item = (usize, i32);
+    type Item = (usize, i8);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_index >= self.len {
@@ -167,9 +148,9 @@ mod tests {
 
     #[test]
     fn test_indexes() {
-        assert_eq!(vec![(0, 1), (2, -1), (4, 1), (6, -1), (8, 1)], indexes(1, 10).collect::<Vec<(usize, i32)>>());
-        assert_eq!(vec![(1, 1), (2, 1), (5, -1), (6, -1), (9, 1)], indexes(2, 10).collect::<Vec<(usize, i32)>>());
-        assert_eq!(vec![(2, 1), (3, 1), (4, 1), (8, -1), (9, -1)], indexes(3, 10).collect::<Vec<(usize, i32)>>());
+        assert_eq!(vec![(0, 1), (2, -1), (4, 1), (6, -1), (8, 1)], indexes(1, 10).collect::<Vec<(usize, i8)>>());
+        assert_eq!(vec![(1, 1), (2, 1), (5, -1), (6, -1), (9, 1)], indexes(2, 10).collect::<Vec<(usize, i8)>>());
+        assert_eq!(vec![(2, 1), (3, 1), (4, 1), (8, -1), (9, -1)], indexes(3, 10).collect::<Vec<(usize, i8)>>());
     }
 
     #[test]
