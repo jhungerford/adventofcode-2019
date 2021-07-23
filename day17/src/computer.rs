@@ -277,7 +277,7 @@ impl Instruction {
 
 /// Memory contains a sparse representation of memory values.
 #[derive(Clone)]
-struct Memory {
+pub struct Memory {
     values: HashMap<usize, i64>
 }
 
@@ -306,12 +306,12 @@ impl Memory {
 
     /// Returns the value of the given memory address.  If the address has never been set,
     /// returns the default value of 0.
-    fn get(&self, addr: usize) -> i64 {
+    pub fn get(&self, addr: usize) -> i64 {
         self.values.get(&addr).unwrap_or(&0).clone()
     }
 
     /// Sets the memory at the given address.
-    fn set(&mut self, addr: usize, value: i64) {
+    pub fn set(&mut self, addr: usize, value: i64) {
         self.values.insert(addr, value);
     }
 }
@@ -332,7 +332,7 @@ pub struct Computer {
     state: ProgramState,
     input: VecDeque<i64>,
     pub output: VecDeque<i64>,
-    memory: Memory,
+    pub memory: Memory,
 }
 
 impl Computer {
@@ -374,6 +374,13 @@ impl Computer {
         }
     }
 
+    /// Provides the given ascii string as input for the computer.
+    pub fn text_input(&mut self, value: &str) {
+        println!("> {}", value);
+        value.chars().for_each(|c| self.input(c as i64));
+    }
+
+    /// Passes each value in the output to the given visitor.
     pub fn visit_output(&self, visit: fn(&i64)) {
         self.output.iter().for_each(visit)
     }
@@ -381,6 +388,14 @@ impl Computer {
     /// Returns the last value this computer output, or empty if it hasn't output any values.
     pub fn last_output(&self) -> Option<i64> {
         self.output.back().cloned()
+    }
+
+    /// Prints any new ascii output from the computer that hasn't been printed yet.
+    /// Consumes the output, so the output methods won't see the output again.
+    pub fn print_output(&mut self) {
+        while let Some(value) = self.output.pop_front() {
+            print!("{}", value as u8 as char);
+        }
     }
 
     /// Returns whether this computer can run - if it isn't done or waiting for input.
