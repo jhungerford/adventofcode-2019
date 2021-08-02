@@ -17,34 +17,89 @@ mod computer;
 
 fn main() {
     let mut computer = Computer::load("input.txt");
+    // Uncomment to run the computer in interactive mode.
+    // computer.run_interactive();
+
 
     /* Working out Part 1 - want to jump if we'll land on ground, and there's a hole in range.
     J = (A == false || B == false || C == false) && D == true
 
-    -- Reset T and J to false.  There has to be ground in range, so at least one of A, B, C, or D will be false.
+    -- set T to true and J to false.
+    OR J T
+    NOT J J
+    OR J T
+    NOT T J
+
+    -- jump if there's a hole in range (A or B or C = false)
     AND A T
     AND B T
     AND C T
-    AND D T
-    AND T J
+    NOT T J
 
-    -- jump if we'll land on ground (D=true) and there's a hole in range (A, B, or C = false)
-
-    -- hole in range
-    NOT A T
-    OR T J
-
-    NOT B T
-    OR T J
-
-    NOT C T
-    OR T J
-
-    -- land on ground
+    -- land on ground (D=true)
     AND D J
 
     WALK
      */
-    let part1 = computer.run_interactive();
-    println!("Part 1: {:?}", part1);
+    computer.reset();
+    println!("Part 1: {:?}", computer.run_input(vec![
+        "OR J T",
+        "NOT J J",
+        "OR J T",
+        "NOT T J",
+        "AND A T",
+        "AND B T",
+        "AND C T",
+        "NOT T J",
+        "AND D J",
+        "WALK",
+    ]));
+
+    /* Part 2: sensors out to nine tiles (A - I).  Jump is still 4.
+    Jump if there's ground 4 tiles out (D=true), a hole to jump over (A or B or C = false),
+    and we won't get stuck (E=true or H=true)
+
+    Don't jump on x, because we'll end up stuck.  Jump on ^ instead.
+
+    #####.#.##..#####
+      x ^ x ^ x
+
+    -- set T to true and J to false.
+    OR J T
+    NOT J J
+    OR J T
+    NOT T J
+
+    -- don't get stuck (E=true or H=true)
+    OR E J
+    OR H J
+
+    -- jump if there's a hole in range (A or B or C = false)
+    AND A T
+    AND B T
+    AND C T
+    NOT T T
+    AND T J
+
+    -- land on ground (D=true)
+    AND D J
+
+    RUN
+     */
+    computer.reset();
+    println!("Part 2: {:?}", computer.run_input(vec![
+        "OR J T",
+        "NOT J J",
+        "OR J T",
+        "NOT T J",
+        "OR E J",
+        "OR H J",
+        "AND A T",
+        "AND B T",
+        "AND C T",
+        "NOT T T",
+        "AND T J",
+        "AND D J",
+        "RUN",
+    ]));
 }

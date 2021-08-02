@@ -279,7 +279,8 @@ impl Instruction {
 /// Memory contains a sparse representation of memory values.
 #[derive(Clone)]
 pub struct Memory {
-    values: HashMap<usize, i64>
+    values: HashMap<usize, i64>,
+    original_values: HashMap<usize, Option<i64>>,
 }
 
 impl Debug for Memory {
@@ -302,7 +303,10 @@ impl Memory {
     fn for_program(program: &Vec<i64>) -> Memory {
         let values = program.iter().cloned().enumerate().collect::<HashMap<usize, i64>>();
 
-        Memory { values }
+        Memory {
+            values,
+            original_values: HashMap::new(),
+        }
     }
 
     /// Returns the value of the given memory address.  If the address has never been set,
@@ -313,7 +317,24 @@ impl Memory {
 
     /// Sets the memory at the given address.
     pub fn set(&mut self, addr: usize, value: i64) {
-        self.values.insert(addr, value);
+        let original = self.values.insert(addr, value);
+
+        if !self.original_values.contains_key(&addr) {
+            self.original_values.insert(addr, original.clone());
+        }
+    }
+
+    /// Resets the values in this memory to their original values.
+    fn reset(&mut self) {
+        for (addr, maybe_value) in self.original_values.to_owned().into_iter() {
+            if let Some(value) = maybe_value {
+                self.set(addr, value);
+            } else {
+                self.values.remove(&addr);
+            }
+        }
+
+        self.original_values = HashMap::new();
     }
 }
 
@@ -440,8 +461,38 @@ impl Computer {
         self.last_output()
     }
 
+    /// Runs the ASCII computer, providing the given input when prompted.
+    pub fn run_input(&mut self, input: Vec<&str>) -> Option<i64> {
+        let mut line_num = 0;
+        while self.state != ProgramState::Done {
+            self.run();
+            self.print_output();
+
+            if self.state == ProgramState::WaitingForInput {
+                let line = input[line_num];
+                line_num += 1;
+                println!("> {}", line);
+                self.text_input(line);
+                self.text_input("\n");
+            }
+        }
+
+        self.print_output();
+        self.last_output()
+    }
+
     /// Runs the next instruction in the program, if possible, returning the program state.
     fn step(&mut self) {
         self.state = Instruction::parse(self).run(self);
+    }
+
+    /// Resets this program to its original state.
+    pub fn reset(&mut self) {
+        self.pc = 0;
+        self.relative_base = 0;
+        self.state = ProgramState::Runnable;
+        self.input = VecDeque::new();
+        self.output = VecDeque::new();
+        self.memory.reset();
     }
 }
