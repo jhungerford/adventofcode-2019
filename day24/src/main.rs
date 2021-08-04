@@ -1,7 +1,12 @@
-use day24::{first_repeat, Grid};
+use day24::{Grid, RecursiveGrid};
 
 fn main() {
-    let mut layout = Grid::load("input.txt");
+    let part1 = Grid::load("input.txt");
+    println!("Part 1: {}", part1.first_repeat());
 
-    println!("Part 1: {}", first_repeat(&mut layout))
+    let mut part2 = RecursiveGrid::load("input.txt");
+    for _ in 0..200 {
+        part2.tick();
+    }
+    println!("Part 2: {}", part2.num_bugs());
 }
