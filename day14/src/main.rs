@@ -8,11 +8,11 @@ use std::io::{BufReader, prelude::*};
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
 struct MaterialCount<'a> {
     material: &'a str,
-    count: u32,
+    count: u64,
 }
 
 impl MaterialCount<'_> {
-    fn of(count: u32, material: &str) -> MaterialCount {
+    fn of(count: u64, material: &str) -> MaterialCount {
         MaterialCount {material, count}
     }
 }
@@ -31,7 +31,7 @@ impl Reactions<'_> {
 
         for line in lines {
             let materials: Vec<MaterialCount> = pattern.captures_iter(line).map(|cap| MaterialCount::of(
-                cap[1].parse::<u32>().unwrap(),
+                cap[1].parse::<u64>().unwrap(),
                 cap.get(2).unwrap().as_str()
             )).collect();
 
@@ -43,14 +43,14 @@ impl Reactions<'_> {
         }
     }
 
-    /// Returns the amount of ore that's required to produce one fuel.
-    fn ore_required(self) -> u32 {
+    /// Returns the amount of ore that's required to produce the given amount of fuel.
+    fn ore_required(&self, fuel: u64) -> u64 {
         // Start with fuel, push requirements onto stack
-        let mut needs = HashMap::<&str, u32>::new();
-        let mut leftovers = HashMap::<&str, u32>::new();
+        let mut needs = HashMap::<&str, u64>::new();
+        let mut leftovers = HashMap::<&str, u64>::new();
         let mut ore_produced = 0;
 
-        needs.insert("FUEL", 1);
+        needs.insert("FUEL", fuel);
 
         while !needs.is_empty() {
             let making_material = *needs.keys().next().unwrap();
@@ -79,7 +79,7 @@ impl Reactions<'_> {
                 .unwrap();
 
             // Figure out how many times to run the reaction to produce enough material.
-            let times = (making_count as f32 / reaction_result.count as f32).ceil() as u32;
+            let times = (making_count as f64 / reaction_result.count as f64).ceil() as u64;
 
             // Run the reaction - add the requirements to need
             for input in reaction_requirements {
@@ -98,6 +98,32 @@ impl Reactions<'_> {
         }
 
         ore_produced
+    }
+
+    /// Returns the amount of fuel that can be produced by the given amount of ore.
+    fn fuel_produced(&self, ore: u64) -> u64 {
+        let one_fuel_ore = self.ore_required(1);
+        let mut min_fuel = ore / one_fuel_ore;
+        let mut max_fuel = min_fuel * 2;
+
+        while self.ore_required(max_fuel) < ore {
+            max_fuel += min_fuel;
+        }
+
+        let mut split = min_fuel + (max_fuel - min_fuel) / 2;
+        while self.ore_required(split) > ore || self.ore_required(split + 1) < ore {
+            let ore_required = self.ore_required(split);
+
+            if ore_required > ore {
+                max_fuel = split;
+            } else {
+                min_fuel = split;
+            }
+
+            split = min_fuel + (max_fuel - min_fuel) / 2;
+        }
+
+        split
     }
 }
 
@@ -128,7 +154,7 @@ mod test {
     }
 
     #[test]
-    fn test_ore_required_ex1() {
+    fn test_ex1() {
         let lines = vec![
             "10 ORE => 10 A",
             "1 ORE => 1 B",
@@ -139,11 +165,11 @@ mod test {
         ];
 
         let reactions = Reactions::parse(lines);
-        assert_eq!(reactions.ore_required(), 31);
+        assert_eq!(reactions.ore_required(1), 31);
     }
 
     #[test]
-    fn test_ore_required_ex2() {
+    fn test_ex2() {
         let lines = vec![
             "9 ORE => 2 A",
             "8 ORE => 3 B",
@@ -155,11 +181,11 @@ mod test {
         ];
 
         let reactions = Reactions::parse(lines);
-        assert_eq!(reactions.ore_required(), 165);
+        assert_eq!(reactions.ore_required(1), 165);
     }
 
     #[test]
-    fn test_ore_required_ex3() {
+    fn test_ex3() {
         let lines = vec![
             "157 ORE => 5 NZVS",
             "165 ORE => 6 DCFZ",
@@ -173,11 +199,12 @@ mod test {
         ];
 
         let reactions = Reactions::parse(lines);
-        assert_eq!(reactions.ore_required(), 13312);
+        assert_eq!(reactions.ore_required(1), 13312);
+        assert_eq!(reactions.fuel_produced(1000000000000), 82892753);
     }
 
     #[test]
-    fn test_ore_required_ex4() {
+    fn test_ex4() {
         let lines = vec![
             "2 VPVL, 7 FWMGM, 2 CXFTF, 11 MNCFX => 1 STKFG",
             "17 NVRVD, 3 JNWZP => 8 VPVL",
@@ -194,11 +221,12 @@ mod test {
         ];
 
         let reactions = Reactions::parse(lines);
-        assert_eq!(reactions.ore_required(), 180697);
+        assert_eq!(reactions.ore_required(1), 180697);
+        assert_eq!(reactions.fuel_produced(1000000000000), 5586022);
     }
 
     #[test]
-    fn test_ore_required_ex5() {
+    fn test_ex5() {
         let lines = vec![
             "171 ORE => 8 CNZTR",
             "7 ZLQW, 3 BMBT, 9 XCVML, 26 XMNCP, 1 WPTQ, 2 MZWV, 1 RJRHP => 4 PLWSL",
@@ -220,7 +248,8 @@ mod test {
         ];
 
         let reactions = Reactions::parse(lines);
-        assert_eq!(reactions.ore_required(), 2210736);
+        assert_eq!(reactions.ore_required(1), 2210736);
+        assert_eq!(reactions.fuel_produced(1000000000000), 460664);
     }
 }
 
@@ -238,5 +267,6 @@ fn main() {
     let lines: Vec<&str> = read_lines.iter().map(|s| s as &str).collect();
 
     let reactions = Reactions::parse(lines);
-    println!("Part 1: {}", reactions.ore_required());
+    println!("Part 1: {}", reactions.ore_required(1));
+    println!("Part 2: {}", reactions.fuel_produced(1000000000000));
 }
