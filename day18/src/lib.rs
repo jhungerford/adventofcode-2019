@@ -2,9 +2,15 @@
 // keys open doors with matching letters.
 // Part 1: starting at the entrance, how many steps are in the shortest path that collects all keys?
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{BufRead, BufReader, stdout, Write};
+use std::ops::Add;
+
+use bit_set::BitSet;
+use itertools::Itertools;
+use std::cmp::Ordering;
+use std::fmt::{Debug, Formatter};
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Square {
@@ -13,6 +19,8 @@ pub enum Square {
     Wall,
     Key(char),
     Door(char),
+    Intersection,
+    DeadEnd,
 }
 
 impl From<char> for Square {
@@ -28,14 +36,27 @@ impl From<char> for Square {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Map {
-    squares: Vec<Vec<Square>>,
-    entrance: Position,
-    num_keys: usize,
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Direction {
+    Up, Down, Left, Right,
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+impl Direction {
+    fn values() -> Vec<Direction> {
+        vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right]
+    }
+
+    fn reverse(&self) -> Direction {
+        match self {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
+}
+
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub struct Position {
     row: usize,
     col: usize,
@@ -46,6 +67,144 @@ impl Position {
     pub fn new(row: usize, col: usize) -> Position {
         Position { row, col }
     }
+}
+
+impl Add<Direction> for Position {
+    type Output = Position;
+
+    fn add(self, rhs: Direction) -> Self::Output {
+        match rhs {
+            Direction::Up => Position::new(self.row - 1, self.col),
+            Direction::Down => Position::new(self.row + 1, self.col),
+            Direction::Left => Position::new(self.row, self.col - 1),
+            Direction::Right => Position::new(self.row, self.col + 1),
+        }
+    }
+}
+
+
+#[derive(Debug)]
+struct RawEdge {
+    start: Position,
+    end: Position,
+    start_square: Square,
+    end_square: Square,
+    length: usize,
+}
+
+#[derive(Debug)]
+struct RawGraph {
+    edges: HashMap<Position, Vec<RawEdge>>,
+}
+
+impl From<&Map> for RawGraph {
+    fn from(map: &Map) -> Self {
+        /// Position in the map that will form a graph node.
+        #[derive(Debug)]
+        struct PointOfInterest {
+            position: Position,
+            direction: Direction,
+            square: Square,
+        }
+
+        // Scan the map for points of interest that will form the edges of the graph.
+        let points_of_interest = (1..(map.squares.len() - 1))
+            .flat_map(|row| (1..(map.squares[row].len() - 1))
+                .flat_map(move |col| {
+                    let position = Position::new(row, col);
+                    let non_wall_neighbors = Direction::values().into_iter()
+                        .filter(|&direction| map.get(position + direction) != Square::Wall)
+                        .collect::<Vec<Direction>>();
+
+                    let maybe_square = match map.get(position) {
+                        Square::Open if non_wall_neighbors.len() == 1 => Some(Square::DeadEnd),
+                        Square::Open if non_wall_neighbors.len() > 2 => Some(Square::Intersection),
+                        s @ Square::Entrance | s @ Square::Key(_) | s @ Square::Door(_) => Some(s),
+                        _ => None,
+                    };
+
+                    maybe_square.map(|square| non_wall_neighbors.into_iter()
+                        .map(|direction| PointOfInterest { position: position.clone(), direction, square })
+                        .collect::<Vec<PointOfInterest>>()
+                    ).unwrap_or(Vec::new())
+                }))
+            .collect::<Vec<PointOfInterest>>();
+
+        // Explore outwards from each point of interest to build the edges of the graph.
+        let poi_positions = points_of_interest.iter()
+            .map(|poi| poi.position)
+            .collect::<HashSet<Position>>();
+
+        let edges = points_of_interest.iter().map(|poi| {
+            let mut dir = poi.direction;
+            let mut pos = poi.position + dir;
+            let mut length = 1;
+
+            while !poi_positions.contains(&pos) {
+                dir = Direction::values().into_iter()
+                    .filter(|&direction| direction != dir.reverse() && map.get(pos + direction) != Square::Wall)
+                    .next().unwrap();
+                pos = pos + dir;
+                length += 1;
+            }
+
+            RawEdge {
+                start: poi.position,
+                end: pos,
+                start_square: poi.square,
+                end_square: map.get(pos),
+                length
+            }
+        }).collect::<Vec<RawEdge>>();
+
+        RawGraph {
+            edges: edges.into_iter().map(|edge| (edge.start, edge)).into_group_map()
+        }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+struct Keys {
+    picked_up: BitSet,
+}
+
+impl Debug for Keys {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.picked_up.iter().map(|num| (num + 'a' as usize) as u8 as char).join(", "))
+    }
+}
+
+impl Keys {
+    /// Creates a new Keys where none of the keys have been picked up.
+    fn new() -> Self {
+        Keys {
+            picked_up: BitSet::new()
+        }
+    }
+
+    /// Returns whether the given key has been picked up.
+    fn has(&self, key: char) -> bool {
+        self.picked_up.contains(key as usize - 'a' as usize)
+    }
+
+    /// Returns a new Keys that contains all of these keys, plus the given key.
+    fn pick_up(&self, key: char) -> Self {
+        let mut new_keys = self.clone();
+        new_keys.picked_up.insert(key as usize - 'a' as usize);
+        new_keys
+    }
+
+    /// Returned whether the given number of keys have been picked up.
+    fn all_picked_up(&self, num_keys: usize) -> bool {
+        self.picked_up.len() == num_keys
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct Map {
+    squares: Vec<Vec<Square>>,
+    entrance: Position,
+    num_keys: usize,
 }
 
 impl Map {
@@ -63,13 +222,14 @@ impl Map {
 
             for (col, c) in line.unwrap().chars().enumerate() {
                 let square: Square = Square::from(c);
-                row_squares.push(square);
 
-                match square {
+                match &square {
                     Square::Entrance => entrance = Position::new(row, col),
                     Square::Key(_) => num_keys += 1,
                     _ => {},
                 }
+
+                row_squares.push(square);
             }
 
             squares.push(row_squares);
@@ -78,94 +238,98 @@ impl Map {
         Map { squares, entrance, num_keys }
     }
 
+    /// Returns the square at the given position.
+    pub fn get(&self, position: Position) -> Square {
+        self.squares[position.row][position.col]
+    }
+
     /// Returns the shortest number of steps that collects all of the keys.
     pub fn all_keys_steps(&self) -> usize {
-        let mut visited: HashSet<State> = HashSet::new();
-        let mut to_visit = VecDeque::new();
+        // Convert the map into a raw graph.  Nodes include intersections, dead ends, etc.
+        let raw_graph = RawGraph::from(self);
 
-        to_visit.push_back(State {
-            position: self.entrance.clone(),
-            steps: 0,
-            keys: Vec::new(),
-            doors: Vec::new(),
+        #[derive(Debug, Eq, PartialEq, Hash)]
+        struct Visited {
+            position: Position,
+            keys: Keys,
+        }
+
+        #[derive(Debug, Eq, PartialEq)]
+        struct ToVisit {
+            position: Position,
+            length: usize,
+            keys: Keys
+        }
+
+        impl Ord for ToVisit {
+            fn cmp(&self, other: &Self) -> Ordering {
+                other.length.cmp(&self.length)
+            }
+        }
+
+        impl PartialOrd for ToVisit {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        let mut visited = HashSet::new();
+        visited.insert(Visited {
+            position: self.entrance,
+            keys: Keys::new(),
         });
 
-        while let Some(pos) = to_visit.pop_front() {
-            if pos.keys.len() == self.num_keys {
-                return pos.steps;
+        let mut to_visit = BinaryHeap::new();
+        to_visit.push(ToVisit {
+            position: self.entrance,
+            length: 0,
+            keys: Keys::new(),
+        });
+
+        while let Some(node) = to_visit.pop() {
+            // println!("Visiting {:?}", node);
+            // println!("   to_visit: {:?}", to_visit);
+            // stdout().flush();
+
+            if node.keys.all_picked_up(self.num_keys) {
+                return node.length;
             }
 
-            for neighbor in self.visitable_neighbors(&pos) {
-                if !visited.contains(&neighbor) {
-                    visited.insert(neighbor.clone());
-                    to_visit.push_back(neighbor);
+            for edge in &raw_graph.edges[&node.position] {
+
+                // Pick up keys along the way.
+                let new_keys = if let Square::Key(key) = edge.end_square {
+                    node.keys.pick_up(key)
+                } else {
+                    node.keys.clone()
+                };
+
+                // Don't go through doors that we don't have the keys to.
+                if let Square::Door(door) = edge.end_square {
+                    if !new_keys.has(door.to_ascii_lowercase()) {
+                        continue;
+                    }
                 }
+
+                // Skip positions that we've already visited with this set of keys.
+                if !visited.insert(Visited {
+                    position: edge.end,
+                    keys: new_keys.clone(),
+                }) {
+                    continue;
+                }
+
+                // Visit the edge.
+                to_visit.push(ToVisit {
+                    position: edge.end,
+                    length: node.length + edge.length,
+                    keys: new_keys.clone(),
+                });
             }
         }
 
         panic!("No path to collect all keys.")
     }
-
-    /// Returns the square at the given position.
-    fn get(&self, pos: &Position) -> Square {
-        self.squares[pos.row][pos.col]
-    }
-
-    /// Returns a list of visitable squares that neighbor the given state.
-    fn visitable_neighbors(&self, state: &State) -> Vec<State> {
-        let neighboring_positions = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter()
-            .filter_map(|(row_delta, col_delta)| {
-                let int_row = state.position.row as i32 + row_delta;
-                let int_col = state.position.col as i32 + col_delta;
-
-                if int_row < 0 || int_col < 0 || int_row as usize >= self.squares.len() || int_col as usize >= self.squares[state.position.row].len() {
-                    None
-                } else {
-                    Some(Position {
-                        row: int_row as usize,
-                        col: int_col as usize,
-                    })
-                }
-            });
-
-        neighboring_positions.filter_map(|neighbor| {
-            let mut new_keys = state.keys.clone();
-            let mut new_doors = state.doors.clone();
-
-            match self.get(&neighbor) {
-                Square::Wall => return None,
-                Square::Key(k) if !state.keys.contains(&k) => {
-                    new_keys.push(k);
-                    new_keys.sort();
-                },
-                Square::Door(d) => {
-                    let key = d.to_lowercase().next().unwrap();
-                    if state.keys.contains(&key) {
-                        new_doors.push(d);
-                        new_doors.sort();
-                    } else {
-                        return None;
-                    }
-                }
-                _ => {},
-            }
-
-            Some(State {
-                position: neighbor,
-                steps: state.steps + 1,
-                keys: new_keys,
-                doors: new_doors,
-            })
-        }).collect()
-    }
-}
-
-#[derive(Debug, Hash, Eq, PartialEq, Clone)]
-struct State {
-    position: Position,
-    steps: usize,
-    keys: Vec<char>,
-    doors: Vec<char>,
 }
 
 #[cfg(test)]
