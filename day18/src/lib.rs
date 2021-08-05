@@ -2,15 +2,15 @@
 // keys open doors with matching letters.
 // Part 1: starting at the entrance, how many steps are in the shortest path that collects all keys?
 
+use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::fmt::{Debug, Formatter};
 use std::fs::File;
-use std::io::{BufRead, BufReader, stdout, Write};
+use std::io::{BufRead, BufReader};
 use std::ops::Add;
 
 use bit_set::BitSet;
 use itertools::Itertools;
-use std::cmp::Ordering;
-use std::fmt::{Debug, Formatter};
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Square {
@@ -203,7 +203,7 @@ impl Keys {
 #[derive(Debug, Eq, PartialEq)]
 pub struct Map {
     squares: Vec<Vec<Square>>,
-    entrance: Position,
+    entrances: Vec<Position>,
     num_keys: usize,
 }
 
@@ -214,7 +214,7 @@ impl Map {
         let f = BufReader::new(f);
 
         let mut squares = Vec::new();
-        let mut entrance= Position::new(0, 0);
+        let mut entrances= Vec::new();
         let mut num_keys = 0;
 
         for (row, line) in f.lines().enumerate() {
@@ -224,7 +224,7 @@ impl Map {
                 let square: Square = Square::from(c);
 
                 match &square {
-                    Square::Entrance => entrance = Position::new(row, col),
+                    Square::Entrance => entrances.push(Position::new(row, col)),
                     Square::Key(_) => num_keys += 1,
                     _ => {},
                 }
@@ -235,7 +235,7 @@ impl Map {
             squares.push(row_squares);
         }
 
-        Map { squares, entrance, num_keys }
+        Map { squares, entrances, num_keys }
     }
 
     /// Returns the square at the given position.
@@ -263,6 +263,8 @@ impl Map {
 
         impl Ord for ToVisit {
             fn cmp(&self, other: &Self) -> Ordering {
+                // Doors that we don't have the key for yet come later.
+
                 other.length.cmp(&self.length)
             }
         }
@@ -274,22 +276,25 @@ impl Map {
         }
 
         let mut visited = HashSet::new();
-        visited.insert(Visited {
-            position: self.entrance,
-            keys: Keys::new(),
-        });
-
         let mut to_visit = BinaryHeap::new();
-        to_visit.push(ToVisit {
-            position: self.entrance,
-            length: 0,
-            keys: Keys::new(),
-        });
+
+        for entrance in &self.entrances {
+            visited.insert(Visited {
+                position: *entrance,
+                keys: Keys::new(),
+            });
+
+            to_visit.push(ToVisit {
+                position: *entrance,
+                length: 0,
+                keys: Keys::new(),
+            });
+        }
+
 
         while let Some(node) = to_visit.pop() {
-            // println!("Visiting {:?}", node);
-            // println!("   to_visit: {:?}", to_visit);
-            // stdout().flush();
+            println!("Visiting {:?}", node);
+            println!("  to_visit {:?}", to_visit);
 
             if node.keys.all_picked_up(self.num_keys) {
                 return node.length;
@@ -339,6 +344,12 @@ mod tests {
     #[test]
     fn all_keys_steps_sample() {
         let map = Map::load("sample.txt");
+        assert_eq!(8, map.all_keys_steps());
+    }
+
+    #[test]
+    fn all_keys_steps_sample_part2() {
+        let map = Map::load("sample_part2.txt");
         assert_eq!(8, map.all_keys_steps());
     }
 
