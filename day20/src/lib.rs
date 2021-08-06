@@ -265,6 +265,100 @@ impl Maze {
         panic!("No path to the exit.")
     }
 
+    /// Returns the shortest path from the entrance of this maze to the exit on the outer level,
+    /// where inner portals lead to an inner level of the maze.
+    pub fn shortest_path_recursive(&self) -> usize {
+        #[derive(Debug, Hash, Eq, PartialEq)]
+        struct Visited {
+            position: Position,
+            level: usize,
+        }
+
+        struct ToVisit {
+            position: Position,
+            direction: Direction,
+            steps: usize,
+            level: usize,
+        }
+
+        let mut visited = HashSet::new();
+        let mut to_visit = VecDeque::new();
+
+        let start_portal = self.name_portals["AA"].iter().next().unwrap();
+        to_visit.push_back(ToVisit {
+            position: start_portal.pos,
+            direction: start_portal.dir,
+            steps: 0,
+            level: 0,
+        });
+
+        while let Some(node) = to_visit.pop_front() {
+            visited.insert(Visited {
+                position: node.position,
+                level: node.level,
+            });
+
+            // Take a step in the node's direction.
+            let new_pos = node.position + node.direction;
+            let new_square = self.square_at(&new_pos);
+
+            // If the step goes through a portal, end up at its exit.
+            if new_square == Square::Portal {
+                let portal = self.portal_at(&new_pos);
+
+                // If we've reached the exit portal on the top level, we've found the path.
+                if portal.name == "ZZ" && node.level == 0 {
+                    return node.steps + 1;
+                }
+
+                // If we're at the top level and this is an exterior portal, it's a wall.
+                if node.level == 0 && self.is_exterior_portal(portal) {
+                    continue;
+                }
+
+                // If we're not at the top level, AA and ZZ are walls.
+                if node.level > 0 && (portal.name == "AA" || portal.name == "ZZ") {
+                    continue;
+                }
+
+                // Otherwise go through the portal.
+                let exit = self.portal_exit(&portal);
+                let exit_level = if self.is_exterior_portal(portal) {
+                    node.level - 1
+                } else {
+                    node.level + 1
+                };
+
+                to_visit.push_back(ToVisit {
+                    position: exit.pos,
+                    direction: exit.dir,
+                    steps: node.steps + 2,
+                    level: exit_level,
+                });
+            } else {
+                // Step puts us in an open square - explore its new neighbors.
+                for dir in vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right] {
+                    let neighbor_pos = new_pos + dir;
+                    let neighbor_square = self.square_at(&neighbor_pos);
+                    let neighbor_visited = Visited {
+                        position: neighbor_pos,
+                        level: node.level,
+                    };
+                    if (neighbor_square == Square::Open || neighbor_square == Square::Portal) && !visited.contains(&neighbor_visited) {
+                        to_visit.push_back(ToVisit {
+                            position: new_pos,
+                            direction: dir,
+                            steps: node.steps + 1,
+                            level: node.level,
+                        });
+                    }
+                }
+            }
+        }
+
+        panic!("No path through the maze")
+    }
+
     /// Returns the square at the given position.
     fn square_at(&self, pos: &Position) -> Square {
         self.squares[pos.row][pos.col]
@@ -280,6 +374,13 @@ impl Maze {
         self.name_portals.get(&portal.name).unwrap().iter()
             .find(|p| p.pos != portal.pos)
             .unwrap()
+    }
+
+    fn is_exterior_portal(&self, portal: &Portal) -> bool {
+        portal.pos.row == 2
+            || portal.pos.row == self.squares.len() - 3
+            || portal.pos.col == 2
+            || portal.pos.col == self.squares[portal.pos.row].len() - 3
     }
 }
 
@@ -297,5 +398,17 @@ mod tests {
     fn shortest_path_sample2() {
         let maze = Maze::load("sample2.txt");
         assert_eq!(58, maze.shortest_path());
+    }
+
+    #[test]
+    fn shortest_path_recursive_sample() {
+        let maze = Maze::load("sample.txt");
+        assert_eq!(26, maze.shortest_path_recursive());
+    }
+
+    #[test]
+    fn shortest_path_recursive_sample3() {
+        let maze = Maze::load("sample3.txt");
+        assert_eq!(396, maze.shortest_path_recursive());
     }
 }
