@@ -3,7 +3,7 @@
 // Part 1: starting at the entrance, how many steps are in the shortest path that collects all keys?
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -19,8 +19,6 @@ pub enum Square {
     Wall,
     Key(char),
     Door(char),
-    Intersection,
-    DeadEnd,
 }
 
 impl From<char> for Square {
@@ -44,15 +42,6 @@ pub enum Direction {
 impl Direction {
     fn values() -> Vec<Direction> {
         vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right]
-    }
-
-    fn reverse(&self) -> Direction {
-        match self {
-            Direction::Up => Direction::Down,
-            Direction::Down => Direction::Up,
-            Direction::Left => Direction::Right,
-            Direction::Right => Direction::Left,
-        }
     }
 }
 
@@ -82,87 +71,6 @@ impl Add<Direction> for Position {
     }
 }
 
-
-#[derive(Debug)]
-struct RawEdge {
-    start: Position,
-    end: Position,
-    start_square: Square,
-    end_square: Square,
-    length: usize,
-}
-
-#[derive(Debug)]
-struct RawGraph {
-    edges: HashMap<Position, Vec<RawEdge>>,
-}
-
-impl From<&Map> for RawGraph {
-    fn from(map: &Map) -> Self {
-        /// Position in the map that will form a graph node.
-        #[derive(Debug)]
-        struct PointOfInterest {
-            position: Position,
-            direction: Direction,
-            square: Square,
-        }
-
-        // Scan the map for points of interest that will form the edges of the graph.
-        let points_of_interest = (1..(map.squares.len() - 1))
-            .flat_map(|row| (1..(map.squares[row].len() - 1))
-                .flat_map(move |col| {
-                    let position = Position::new(row, col);
-                    let non_wall_neighbors = Direction::values().into_iter()
-                        .filter(|&direction| map.get(position + direction) != Square::Wall)
-                        .collect::<Vec<Direction>>();
-
-                    let maybe_square = match map.get(position) {
-                        Square::Open if non_wall_neighbors.len() == 1 => Some(Square::DeadEnd),
-                        Square::Open if non_wall_neighbors.len() > 2 => Some(Square::Intersection),
-                        s @ Square::Entrance | s @ Square::Key(_) | s @ Square::Door(_) => Some(s),
-                        _ => None,
-                    };
-
-                    maybe_square.map(|square| non_wall_neighbors.into_iter()
-                        .map(|direction| PointOfInterest { position: position.clone(), direction, square })
-                        .collect::<Vec<PointOfInterest>>()
-                    ).unwrap_or(Vec::new())
-                }))
-            .collect::<Vec<PointOfInterest>>();
-
-        // Explore outwards from each point of interest to build the edges of the graph.
-        let poi_positions = points_of_interest.iter()
-            .map(|poi| poi.position)
-            .collect::<HashSet<Position>>();
-
-        let edges = points_of_interest.iter().map(|poi| {
-            let mut dir = poi.direction;
-            let mut pos = poi.position + dir;
-            let mut length = 1;
-
-            while !poi_positions.contains(&pos) {
-                dir = Direction::values().into_iter()
-                    .filter(|&direction| direction != dir.reverse() && map.get(pos + direction) != Square::Wall)
-                    .next().unwrap();
-                pos = pos + dir;
-                length += 1;
-            }
-
-            RawEdge {
-                start: poi.position,
-                end: pos,
-                start_square: poi.square,
-                end_square: map.get(pos),
-                length
-            }
-        }).collect::<Vec<RawEdge>>();
-
-        RawGraph {
-            edges: edges.into_iter().map(|edge| (edge.start, edge)).into_group_map()
-        }
-    }
-}
-
 #[derive(Clone, Eq, PartialEq, Hash)]
 struct Keys {
     picked_up: BitSet,
@@ -170,7 +78,7 @@ struct Keys {
 
 impl Debug for Keys {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.picked_up.iter().map(|num| (num + 'a' as usize) as u8 as char).join(", "))
+        write!(f, "[{}]", self.picked_up.iter().map(|num| (num + 'a' as usize) as u8 as char).join(", "))
     }
 }
 
@@ -182,15 +90,27 @@ impl Keys {
         }
     }
 
-    /// Returns whether the given key has been picked up.
-    fn has(&self, key: char) -> bool {
-        self.picked_up.contains(key as usize - 'a' as usize)
+    /// Returns whether this has all of the keys for the given doors.
+    fn has_keys(&self, doors: &Keys) -> bool {
+        self.picked_up.is_superset(&doors.picked_up)
     }
 
     /// Returns a new Keys that contains all of these keys, plus the given key.
-    fn pick_up(&self, key: char) -> Self {
+    fn pick_up(&self, square: Square) -> Self {
         let mut new_keys = self.clone();
-        new_keys.picked_up.insert(key as usize - 'a' as usize);
+
+        if let Some(key) = match square {
+            Square::Door(d) => {
+                Some(d.to_ascii_lowercase())
+            }
+            Square::Key(k) => {
+                Some(k)
+            }
+            _ => None,
+        } {
+            new_keys.picked_up.insert(key as usize - 'a' as usize);
+        }
+
         new_keys
     }
 
@@ -205,6 +125,13 @@ pub struct Map {
     squares: Vec<Vec<Square>>,
     entrances: Vec<Position>,
     num_keys: usize,
+}
+
+#[derive(Debug)]
+struct KeyEdge {
+    end: Position,
+    doors: Keys,
+    length: usize,
 }
 
 impl Map {
@@ -239,32 +166,30 @@ impl Map {
     }
 
     /// Returns the square at the given position.
-    pub fn get(&self, position: Position) -> Square {
+    pub fn get(&self, position: &Position) -> Square {
         self.squares[position.row][position.col]
     }
 
     /// Returns the shortest number of steps that collects all of the keys.
     pub fn all_keys_steps(&self) -> usize {
-        // Convert the map into a raw graph.  Nodes include intersections, dead ends, etc.
-        let raw_graph = RawGraph::from(self);
+        // Only the entrances and keys matter - compute the edges between them.
+        let key_graph = self.key_graph();
 
-        #[derive(Debug, Eq, PartialEq, Hash)]
-        struct Visited {
-            position: Position,
+        // State captures the position of robots and collected keys as we explore the graph.
+        #[derive(Debug, Hash, Eq, PartialEq, Clone)]
+        struct State {
+            robots: Vec<Position>,
             keys: Keys,
         }
 
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Eq, PartialEq, Clone)]
         struct ToVisit {
-            position: Position,
-            length: usize,
-            keys: Keys
+            state: State,
+            length: usize
         }
 
         impl Ord for ToVisit {
             fn cmp(&self, other: &Self) -> Ordering {
-                // Doors that we don't have the key for yet come later.
-
                 other.length.cmp(&self.length)
             }
         }
@@ -275,65 +200,159 @@ impl Map {
             }
         }
 
-        let mut visited = HashSet::new();
+        // Use Dijkstra's algorithm to compute the shortest path that collects all of the keys.
         let mut to_visit = BinaryHeap::new();
+        let mut dist = HashMap::new();
 
-        for entrance in &self.entrances {
-            visited.insert(Visited {
-                position: *entrance,
-                keys: Keys::new(),
-            });
+        let initial_state = State {
+            robots: self.entrances.clone(),
+            keys: Keys::new(),
+        };
 
-            to_visit.push(ToVisit {
-                position: *entrance,
-                length: 0,
-                keys: Keys::new(),
-            });
-        }
+        to_visit.push(ToVisit {
+            state: initial_state.clone(),
+            length: 0,
+        });
 
+        dist.insert(initial_state, 0);
 
         while let Some(node) = to_visit.pop() {
-            println!("Visiting {:?}", node);
-            println!("  to_visit {:?}", to_visit);
+            let node_length = dist[&node.state];
 
-            if node.keys.all_picked_up(self.num_keys) {
-                return node.length;
+            // Bail if we've already found a shorter route to this state.
+            if node.length > node_length {
+                continue;
             }
 
-            for edge in &raw_graph.edges[&node.position] {
+            // If we've picked up all the keys, we've found the shortest path through the map.
+            if node.state.keys.all_picked_up(self.num_keys) {
+                return node_length;
+            }
 
-                // Pick up keys along the way.
-                let new_keys = if let Square::Key(key) = edge.end_square {
-                    node.keys.pick_up(key)
-                } else {
-                    node.keys.clone()
-                };
 
-                // Don't go through doors that we don't have the keys to.
-                if let Square::Door(door) = edge.end_square {
-                    if !new_keys.has(door.to_ascii_lowercase()) {
+            // Explore each of the robots neighbors that we can reach.
+            for (i, robot) in node.state.robots.iter().enumerate() {
+                for neighbor_edge in &key_graph[robot] {
+                    // Only go through doors that we have keys for.
+                    if !node.state.keys.has_keys(&neighbor_edge.doors) {
                         continue;
                     }
-                }
 
-                // Skip positions that we've already visited with this set of keys.
-                if !visited.insert(Visited {
-                    position: edge.end,
-                    keys: new_keys.clone(),
-                }) {
-                    continue;
-                }
+                    let mut neighbor_robots = node.state.robots.clone();
+                    neighbor_robots[i] = neighbor_edge.end.clone();
 
-                // Visit the edge.
-                to_visit.push(ToVisit {
-                    position: edge.end,
-                    length: node.length + edge.length,
-                    keys: new_keys.clone(),
-                });
+                    let neighbor_state = State {
+                        robots: neighbor_robots,
+                        keys: node.state.keys.pick_up(self.get(&neighbor_edge.end))
+                    };
+
+                    let neighbor_length = node_length + neighbor_edge.length;
+                    if neighbor_length < *dist.get(&neighbor_state).unwrap_or(&usize::MAX) {
+                        dist.insert(neighbor_state.clone(), neighbor_length);
+
+                        to_visit.push(ToVisit {
+                            state: neighbor_state,
+                            length: neighbor_length,
+                        })
+                    }
+                }
             }
         }
 
         panic!("No path to collect all keys.")
+    }
+
+    /// Returns a graph view of this map.  The map contains edges from each of the entrances
+    /// and keys to reachable edges and keys.
+    fn key_graph(&self) -> HashMap<Position, Vec<KeyEdge>> {
+        let mut graph: HashMap<Position, Vec<KeyEdge>> = HashMap::new();
+
+        let mut to_visit = VecDeque::new();
+        let mut keys = Vec::new();
+
+        struct ToVisit {
+            start: Position,
+            position: Position,
+            doors: Keys,
+            length: usize,
+            visited: HashSet<Position>,
+        }
+
+        // Start at each of the keys / entrances.
+        for row in 0..self.squares.len() {
+            for col in 0..self.squares[row].len() {
+                let pos = Position::new(row, col);
+                let square = self.get(&pos);
+                match square {
+                    Square::Entrance | Square::Key(_) => {
+                        if square != Square::Entrance {
+                            keys.push(pos);
+                        }
+
+                        to_visit.push_back(ToVisit {
+                            start: pos,
+                            position: pos,
+                            doors: Keys::new(),
+                            length: 0,
+                            visited: vec![pos].into_iter().collect(),
+                        })
+                    },
+                    _ => {}
+                };
+            }
+        }
+
+        // Explore until we've found all of the paths between keys.
+        while let Some(node) = to_visit.pop_front() {
+            for direction in Direction::values() {
+                let neighbor = node.position + direction;
+                if node.visited.contains(&neighbor) {
+                    continue;
+                }
+
+                let neighbor_square = self.get(&neighbor);
+                let mut neighbor_visited = node.visited.clone();
+                neighbor_visited.insert(neighbor);
+
+                match neighbor_square {
+                    Square::Key(_) => {
+                        graph.entry(node.start).or_default().push(KeyEdge {
+                            end: neighbor,
+                            doors: node.doors.clone(),
+                            length: node.length + 1,
+                        });
+                    },
+
+                    Square::Door(_) => {
+                        to_visit.push_back(ToVisit {
+                            start: node.start,
+                            position: neighbor,
+                            doors: node.doors.pick_up(neighbor_square),
+                            length: node.length + 1,
+                            visited: neighbor_visited,
+                        });
+                    },
+
+                    Square::Open | Square::Entrance => {
+                        to_visit.push_back(ToVisit {
+                            start: node.start,
+                            position: neighbor,
+                            doors: node.doors.clone(),
+                            length: node.length + 1,
+                            visited: neighbor_visited,
+                        });
+                    },
+                    Square::Wall => {},
+                }
+            }
+        }
+
+        // Make sure there's an entry for any keys that only connect to the entrance.
+        for key in keys {
+            graph.entry(key).or_default();
+        }
+
+        graph
     }
 }
 
@@ -344,12 +363,6 @@ mod tests {
     #[test]
     fn all_keys_steps_sample() {
         let map = Map::load("sample.txt");
-        assert_eq!(8, map.all_keys_steps());
-    }
-
-    #[test]
-    fn all_keys_steps_sample_part2() {
-        let map = Map::load("sample_part2.txt");
         assert_eq!(8, map.all_keys_steps());
     }
 
@@ -375,5 +388,29 @@ mod tests {
     fn all_keys_steps_sample5() {
         let map = Map::load("sample5.txt");
         assert_eq!(81, map.all_keys_steps());
+    }
+
+    #[test]
+    fn part2_all_keys_steps_sample() {
+        let map = Map::load("part2_sample.txt");
+        assert_eq!(8, map.all_keys_steps());
+    }
+
+    #[test]
+    fn part2_all_keys_steps_sample2() {
+        let map = Map::load("part2_sample2.txt");
+        assert_eq!(24, map.all_keys_steps());
+    }
+
+    #[test]
+    fn part2_all_keys_steps_sample3() {
+        let map = Map::load("part2_sample3.txt");
+        assert_eq!(32, map.all_keys_steps());
+    }
+
+    #[test]
+    fn part2_all_keys_steps_sample4() {
+        let map = Map::load("part2_sample4.txt");
+        assert_eq!(72, map.all_keys_steps());
     }
 }
