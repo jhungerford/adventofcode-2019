@@ -7,65 +7,15 @@
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::iter::Sum;
+use std::ops::Add;
 use std::str::FromStr;
 
-#[derive(Debug)]
-pub struct Deck {
-    cards: Vec<usize>
-}
-
-impl Deck {
-    /// Builds a new deck with the given number of cards.
-    pub fn new(size: usize) -> Deck {
-        Deck {
-            cards: (0..size).collect()
-        }
-    }
-
-    /// Returns the position of the given card.
-    pub fn position(&self, card: usize) -> usize {
-        self.cards.iter().position(|&c| c == card).unwrap()
-    }
-
-    /// Performs the given shuffle on this deck, modifying it.
-    pub fn shuffle(&mut self, shuffle: Shuffle) {
-        let num_cards = self.cards.len();
-
-        match shuffle {
-            // Deal reverses the deck.
-            Shuffle::Deal => self.cards.reverse(),
-            // Cut amount takes n cards from the top or bottom (if n is negative) of the deck,
-            // and moves them to the opposite side.
-            Shuffle::Cut(n) => {
-                // TODO: extend copys values - is there a faster way to do this?
-                let mut new_cards = Vec::with_capacity(self.cards.len());
-                if n > 0 {
-                    new_cards.extend_from_slice(&self.cards[n as usize..]);
-                    new_cards.extend_from_slice(&self.cards[0..n as usize]);
-                } else {
-                    let split = (num_cards as isize + n) as usize;
-                    new_cards.extend_from_slice(&self.cards[split..]);
-                    new_cards.extend_from_slice(&self.cards[0..split]);
-                }
-
-                self.cards = new_cards;
-            },
-            // Increment lays out the cards, skipping n cards each time.
-            Shuffle::Increment(n) => {
-                let mut new_cards = vec![0; num_cards];
-                for (index, card) in self.cards.iter().enumerate() {
-                    new_cards[(index * n) % num_cards] = *card;
-                }
-
-                self.cards = new_cards;
-            },
-        }
-    }
-}
+use mod_exp::mod_exp;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Shuffle {
-    Deal,
+    Reverse,
     Cut(isize),
     Increment(usize),
 }
@@ -81,19 +31,19 @@ impl FromStr for Shuffle {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // deal into new stack
         if s == "deal into new stack" {
-            return Ok(Shuffle::Deal);
-        }
-
-        // deal with increment 64
-        if s.starts_with("deal with increment ") {
-            let amount = s[20..].parse::<usize>().unwrap();
-            return Ok(Shuffle::Increment(amount));
+            return Ok(Shuffle::Reverse);
         }
 
         // cut 1004
         if s.starts_with("cut ") {
             let amount = s[4..].parse::<isize>().unwrap();
             return Ok(Shuffle::Cut(amount));
+        }
+
+        // deal with increment 64
+        if s.starts_with("deal with increment ") {
+            let amount = s[20..].parse::<usize>().unwrap();
+            return Ok(Shuffle::Increment(amount));
         }
 
         Err(ParseErr{ message: format!("Invalid shuffle '{}'", s) })
@@ -108,6 +58,95 @@ pub fn load_shuffles(filename: &str) -> Vec<Shuffle> {
     f.lines().map(|line| line.unwrap().parse().unwrap()).collect()
 }
 
+/// Shuffle that composes the operations using modular arithmetic.
+/// See https://codeforces.com/blog/entry/72593
+#[derive(Debug, Copy, Clone)]
+pub struct ModShuffle {
+    a: i128,
+    b: i128,
+    m: i128,
+}
+
+impl Add for ModShuffle {
+    type Output = ModShuffle;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let m = rhs.m;
+        if self.m != m {
+            panic!("Can't add ModShuffles with different moduli")
+        }
+
+        ModShuffle {
+            a: modulo(self.a * rhs.a, m),
+            b: modulo(self.b * rhs.a + rhs.b, m),
+            m
+        }
+    }
+}
+
+impl Sum for ModShuffle {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        iter.reduce(|a, b| a + b).unwrap()
+    }
+}
+
+impl ModShuffle {
+    fn new(a: i128, b: i128, m: i128) -> ModShuffle {
+        ModShuffle { a, b, m }
+    }
+
+    /// Creates a new ModShuffle that will perform all of the shuffles once on the given number of cards.
+    pub fn from(shuffles: &Vec<Shuffle>, num_cards: i128) -> Self {
+        shuffles.iter().map(|shuffle| match shuffle {
+            Shuffle::Reverse => ModShuffle::new(-1, -1, num_cards),
+            Shuffle::Cut(n) => ModShuffle::new(1, -*n as i128, num_cards),
+            Shuffle::Increment(n) => ModShuffle::new(*n as i128, 0, num_cards),
+        }).sum()
+    }
+
+    /// Returns the position of the given card after running the shuffle once.
+    pub fn position(&self, card: usize) -> usize {
+        modulo(self.a * card as i128 + self.b, self.m) as usize
+
+    }
+
+    /// Returns the number on the card that ends up in the given position after repeating
+    /// the shuffle for the given number of rounds.
+    pub fn card(&self, position: usize, rounds: i128) -> usize {
+
+        // Applying the shuffles n times forms a geometic series,
+        // which simplifies to a^n * x + b * (1 - a^n) / (1 - a) mod m.
+        // Inverting the expression, we get f^-n(x) = x - B / A
+
+        let exp_a = mod_exp(self.a, rounds, self.m);
+        let exp_b = modulo(modulo(self.b * (1 - exp_a), self.m) * inverse(modulo(1 - self.a, self.m), self.m), self.m);
+
+        let result = (position as i128 - exp_b) * inverse(exp_a, self.m);
+
+        modulo(result, self.m) as usize
+    }
+
+    /// Returns a full deck after running this shuffle once.
+    pub fn deck(&self) -> Vec<usize> {
+        let mut cards: Vec<usize> = vec![0; self.m as usize];
+
+        for card in 0..self.m as usize {
+            cards[self.position(card)] = card;
+        }
+
+        cards
+    }
+}
+
+/// Returns n mod m.  `n % m` computes the _remainder_, where modulo(n, m) computes n - ⌊ n / m ⌋.
+/// Modulo will always be positive, where the remainder may be negative.
+fn modulo(n: i128, m: i128) -> i128 {
+    n.rem_euclid(m)
+}
+
+fn inverse(a: i128, m: i128) -> i128 {
+    mod_exp(a, m-2, m)
+}
 
 #[cfg(test)]
 mod tests {
@@ -115,82 +154,109 @@ mod tests {
 
     #[test]
     fn test_deal() {
-        let mut deck = Deck::new(10);
-        deck.shuffle(Shuffle::Deal);
+        let expected = vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+        let shuffles = vec![Shuffle::Reverse];
 
-        assert_eq!(vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn test_cut() {
-        let mut deck = Deck::new(10);
-        deck.shuffle(Shuffle::Cut(3));
+        let expected = vec![3, 4, 5, 6, 7, 8, 9, 10, 0, 1, 2];
+        let shuffles = vec![Shuffle::Cut(3)];
 
-        assert_eq!(vec![3, 4, 5, 6, 7, 8, 9, 0, 1, 2], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn test_negative_cut() {
-        let mut deck = Deck::new(10);
-        deck.shuffle(Shuffle::Cut(-4));
+        let expected = vec![7, 8, 9, 10, 0, 1, 2, 3, 4, 5, 6];
+        let shuffles = vec![Shuffle::Cut(-4)];
 
-        assert_eq!(vec![6, 7, 8, 9, 0, 1, 2, 3, 4, 5], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn test_increment() {
-        let mut deck = Deck::new(10);
-        deck.shuffle(Shuffle::Increment(3));
+        let expected = vec![0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7];
 
-        assert_eq!(vec![0, 7, 4, 1, 8, 5, 2, 9, 6, 3], deck.cards);
+        let shuffles = vec![Shuffle::Increment(3)];
+
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn sample1() {
-        let mut deck = Deck::new(10);
-        for line in vec![
+        let expected = vec![0, 8, 5, 2, 10, 7, 4, 1, 9, 6, 3];
+
+        let shuffles = vec![
             "deal with increment 7",
             "deal into new stack",
             "deal into new stack",
-        ] {
-            deck.shuffle(line.parse().unwrap());
-        }
+        ].into_iter().map(|line| line.parse().unwrap()).collect::<Vec<Shuffle>>();
 
-        assert_eq!(vec![0, 3, 6, 9, 2, 5, 8, 1, 4, 7], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn sample2() {
-        let mut deck = Deck::new(10);
-        for line in vec![
+        let expected = vec![9, 1, 4, 7, 10, 2, 5, 8, 0, 3, 6];
+
+        let shuffles = vec![
             "cut 6",
             "deal with increment 7",
             "deal into new stack",
-        ] {
-            deck.shuffle(line.parse().unwrap());
-        }
+        ].into_iter().map(|line| line.parse().unwrap()).collect::<Vec<Shuffle>>();
 
-        assert_eq!(vec![3, 0, 7, 4, 1, 8, 5, 2, 9, 6], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn sample3() {
-        let mut deck = Deck::new(10);
-        for line in vec![
+        let expected = vec![8, 4, 0, 7, 3, 10, 6, 2, 9, 5, 1];
+
+        let shuffles = vec![
             "deal with increment 7",
             "deal with increment 9",
             "cut -2",
-        ] {
-            deck.shuffle(line.parse().unwrap());
-        }
+        ].into_iter().map(|line| line.parse().unwrap()).collect::<Vec<Shuffle>>();
 
-        assert_eq!(vec![6, 3, 0, 7, 4, 1, 8, 5, 2, 9], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 
     #[test]
     fn sample4() {
-        let mut deck = Deck::new(10);
-        for line in vec![
+        let expected = vec![1, 8, 4, 0, 7, 3, 10, 6, 2, 9, 5];
+
+        let shuffles = vec![
             "deal into new stack",
             "cut -2",
             "deal with increment 7",
@@ -201,10 +267,12 @@ mod tests {
             "deal with increment 9",
             "deal with increment 3",
             "cut -1",
-        ] {
-            deck.shuffle(line.parse().unwrap());
-        }
+        ].into_iter().map(|line| line.parse().unwrap()).collect::<Vec<Shuffle>>();
 
-        assert_eq!(vec![9, 2, 5, 8, 1, 4, 7, 0, 3, 6], deck.cards);
+        let mod_shuffle = ModShuffle::from(&shuffles, expected.len() as i128);
+        assert_eq!(expected, mod_shuffle.deck());
+
+        let cards = (0..expected.len()).map(|i| mod_shuffle.card(i, 1)).collect::<Vec<usize>>();
+        assert_eq!(cards, expected);
     }
 }
